@@ -1,0 +1,113 @@
+import { expect, test } from '@playwright/test';
+
+test('角色养成：集中编辑、明细、口径核实、换装保留及冲突恢复', async ({ page, request }) => {
+  const errors: string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  const cycle=await (await request.post('/api/cycles',{data:{name:'养成验收周期'}})).json();
+  const account=await (await request.post('/api/accounts',{data:{name:'养成验收账号'}})).json();
+  const character=await (await request.post(`/api/accounts/${account.id}/characters`,{data:{name:'养成验收角色'}})).json();
+  const url=`/api/accounts/${account.id}/characters/${character.id}`;
+  const slots=(await (await request.get('/api/workspace')).json()).slots as {key:string;name:string}[];
+  const stat=async(kind:string,rows:unknown[])=>{
+    const state=await (await request.get(`/api/cycles/${cycle.id}/data`)).json();
+    const preview=await (await request.post(`/api/cycles/${cycle.id}/data/${kind}/preview`,{data:{expected_version:state.cycle.version,rows}})).json();
+    const applied=await request.post(`/api/cycles/${cycle.id}/changes/${preview.preview_id}/apply`);
+    expect(applied.ok(),await applied.text()).toBe(true);
+  };
+  const gear=(type:string,socket=false)=>({cycle_origin_id:cycle.id,equipment_type:type,actual_grade:1110,has_constitution_socket:socket,green_stats_ok:true,base_constitution_override:10});
+  const choices=(weapon:boolean)=>({enchant:weapon?{state:'configured',name:'验收附魔'}:{state:'none'},rainbow:weapon?{state:'configured',name:'验收五彩石'}:{state:'unknown'}});
+  for(const slot of slots){
+    const type=slot.key.startsWith('ring')?'ring':slot.key;
+    const response=await request.put(`${url}/equipment/${slot.key}`,{data:{expected_version:0,equipment:gear(type),choices:choices(type==='weapon')}});
+    expect(response.ok(),await response.text()).toBe(true);
+  }
+  await stat('refine',[...new Set(slots.map(s=>s.key.startsWith('ring')?'ring':s.key))].map(type=>({actual_grade:1110,equipment_type:type,refine_level:0,constitution:0})));
+  await stat('enchant',[{equipment_type:'weapon',name:'验收附魔',constitution:5}]);
+  await stat('rainbow',[{name:'验收五彩石',constitution:7}]);
+  await stat('stone',[{stone_level:8,constitution:9}]);
+  await stat('buff',[{skill:'验收技能',stacks:1,threshold:120},{skill:'验收技能',stacks:2,threshold:140}]);
+  await page.goto('/');
+  await page.getByLabel('游戏账号',{exact:true}).selectOption(account.id);
+  await page.getByRole('button',{name:'养成验收角色 武器',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByText('更多信息',{exact:true}).click();
+  await expect(dialog.getByText('原周期默认：5；贡献留空时查询默认，手填则覆盖。',{exact:true})).toBeVisible();
+  await expect(dialog.getByText('原周期默认：7；贡献留空时查询默认，手填则覆盖。',{exact:true})).toBeVisible();
+  await expect(dialog.getByLabel('附魔体质贡献',{exact:true})).toHaveValue('');
+  await dialog.getByLabel('附魔体质贡献',{exact:true}).fill('0');
+  await expect(dialog.getByText('当前使用手填体质 0',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();
+  await page.getByRole('button',{name:'养成验收角色 养成与体质',exact:true}).click();
+  await expect(dialog.getByLabel('帽子精炼')).toHaveValue('');
+  for(const slot of slots) await dialog.getByLabel(`${slot.name}精炼`,{exact:true}).selectOption('0');
+  await dialog.getByLabel('帽子五行石').selectOption('8');
+  page.once('dialog',prompt=>prompt.dismiss());
+  await dialog.getByRole('button',{name:'关闭',exact:true}).click();
+  await expect(dialog.getByLabel('帽子五行石')).toHaveValue('8');
+  await dialog.getByRole('button',{name:'保存角色养成',exact:true}).click();
+  await expect(dialog.getByText('装备来源合计 132',{exact:true})).toBeVisible();
+  await dialog.evaluate(element=>{element.scrollTop=0;});
+  await dialog.screenshot({path:'../.tools/screenshots/phase4-growth-overview.png'});
+  await dialog.getByText('体质构成明细',{exact:true}).click();
+  await expect(dialog.getByText('未完善', {exact:true})).toHaveCount(0);
+  await dialog.getByText('技能层数与计算口径',{exact:true}).click();
+  await expect(dialog.getByText(/验收技能：未计算/)).toBeVisible();
+  await dialog.getByLabel('装备以外体质修正').fill('8');
+  await dialog.getByLabel('已核实计算口径与阈值').check();
+  await dialog.getByRole('button',{name:'保存角色养成',exact:true}).click();
+  await expect(dialog.getByText('已核实口径体质：140',{exact:true})).toBeVisible();
+  await expect(dialog.getByText(/验收技能：2 层/)).toBeVisible();
+  await dialog.screenshot({path:'../.tools/screenshots/phase4-growth-desktop.png'});
+  await dialog.getByRole('button',{name:'关闭',exact:true}).click();
+  await expect(page.getByText('装备体质 132',{exact:true})).toBeVisible();
+  // A new socket uses the retained character stone level, not a copied equipment value.
+  const changed=await request.put(`${url}/equipment/hat`,{data:{expected_version:1,equipment:gear('hat',true),choices:choices(false)}});
+  expect(changed.ok(),await changed.text()).toBe(true);
+  await page.reload();
+  await page.getByRole('button',{name:'养成验收角色 养成与体质',exact:true}).click();
+  await expect(dialog.getByLabel('帽子五行石')).toHaveValue('8');
+  await expect(dialog.getByText('装备来源合计 141',{exact:true})).toBeVisible();
+  // Another editor wins. A stale all-slot save must not overwrite even one setting.
+  const before=await (await request.get(`${url}/growth`)).json();
+  const external={slots:before.slots.map((row:any)=>({slot:row.slot,expected_version:row.settings.version,refine_level:row.settings.refine_level,stone_state:row.settings.stone_state,stone_level:row.settings.stone_level})),expected_version:before.calculation.version,expected_cycle_id:before.cycle.id,expected_cycle_version:before.cycle.version,additional_constitution:8,scope_confirmed:true};
+  external.slots[0].refine_level=4;
+  const saved=await request.put(`${url}/growth`,{data:external});
+  expect(saved.ok(),await saved.text()).toBe(true);
+  await dialog.getByLabel('上衣精炼').selectOption('6');
+  await dialog.getByRole('button',{name:'保存角色养成',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('部位养成已在其他页面修改');
+  await expect(dialog.getByLabel('上衣精炼')).toHaveValue('6');
+  page.once('dialog',prompt=>prompt.accept());
+  await dialog.getByRole('button',{name:'重新读取',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await expect(dialog.getByLabel('帽子精炼')).toHaveValue('4');
+  await expect(dialog.getByLabel('上衣精炼')).toHaveValue('0');
+  await expect(dialog.getByRole('button',{name:'保存角色养成',exact:true})).toBeDisabled();
+  await dialog.getByText(/体质构成明细/).click();
+  await dialog.getByText('技能层数与计算口径',{exact:true}).click();
+  await expect(dialog.getByText(/验收技能：未计算/)).toBeVisible();
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await dialog.evaluate(element=>{element.scrollTop=0;});
+  await dialog.screenshot({path:'../.tools/screenshots/phase4-growth-mobile.png'});
+  expect(errors).toEqual([]);
+});
+
+
+test('养成首次读取连续失败后仍能重试恢复', async ({ page, request }) => {
+  const cycle=await (await request.post('/api/cycles',{data:{name:'读取恢复周期'}})).json();
+  const account=await (await request.post('/api/accounts',{data:{name:'读取恢复账号'}})).json();
+  const character=await (await request.post(`/api/accounts/${account.id}/characters`,{data:{name:'读取恢复角色'}})).json();
+  await page.route(`**/characters/${character.id}/growth`, route=>route.fulfill({status:503,json:{detail:'验收模拟读取失败'}}),{times:2});
+  await page.goto('/');
+  await page.getByLabel('游戏账号',{exact:true}).selectOption(account.id);
+  await page.getByRole('button',{name:'读取恢复角色 养成与体质',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await expect(dialog.getByRole('alert')).toContainText('验收模拟读取失败');
+  await dialog.getByRole('button',{name:'重试读取',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('验收模拟读取失败');
+  await dialog.getByRole('button',{name:'重试读取',exact:true}).click();
+  await expect(dialog.getByLabel('帽子精炼')).toHaveValue('');
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  expect(cycle.id).toBeTruthy();
+});

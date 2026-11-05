@@ -1,0 +1,44 @@
+export type Account = { id: string; name: string; sort_order: number; archived: boolean; target_grade: number | null; comparison_mode: 'strict' | 'grade' | 'combined' };
+export type Character = { id: string; account_id: string; name: string; sort_order: number; archived: boolean };
+export type Cycle = { id: string; name: string; archived: boolean; version: number; copied_from_id: string | null };
+export type Source = { id: string; cycle_id: string; source_type: string; name: string; short_label: string; default_grade: number | null };
+export type Template = {
+  id: string; cycle_origin_id: string; source_id: string | null; source_type: string;
+  source_name: string; short_label: string; equipment_type: string; actual_grade: number;
+  has_constitution_socket: boolean; green_stats_ok: boolean;
+  base_constitution_override: number | null; name: string; note: string;
+  base_stat?: { value: number | null; status: 'known' | 'unknown'; source: 'cycle' | 'override' };
+};
+export type AttachmentChoice = { state: 'unknown' | 'none' | 'configured'; name: string; constitution: number | null };
+export type EquipmentChoices = { enchant: AttachmentChoice; rainbow: AttachmentChoice };
+export type EquipmentInput = Omit<Template, 'id' | 'actual_grade'> & { actual_grade: number | null };
+export type Cell = { equipment: Template | null; choices: EquipmentChoices | null; version: number; status: 'unset' | 'missing' | 'met' | 'gap' | 'grade_met'; reasons: string[]; label: string };
+export type Matrix = { account: Account; characters: Character[]; cells: Record<string, Record<string, Cell>>; growth: Record<string, GrowthSummary>; constitution: { status: string; message: string; total: null; stacks: null } };
+export type Workspace = { active_cycle_id: string | null; cycles: Cycle[]; accounts: Account[]; slots: { key: string; name: string }[] };
+export type InventoryItem = { id: string; account_id: string; config_id: string; quantity: number; version: number; label: string; equipment: Template; choices: EquipmentChoices };
+export type Gap = { character_id: string; character_name: string; slot: string; slot_name: string; current_label: string; actual_grade: number | null; expected_version: number; target_grade: number | null; status: Cell['status']; reasons: string[]; candidate_ids: string[] };
+export type DailyData = { warehouse: InventoryItem[]; drops: InventoryItem[]; drop_version: number; gaps: Gap[] };
+export type HistoryItem = { id: string; created_at: string; title: string; summary: string };
+export type Data = { workspace: Workspace; matrix: Matrix | null; characters: Character[]; sources: Source[]; templates: Template[]; accountId: string; cycleId: string; daily: DailyData | null };
+export type Run = (action: () => Promise<unknown>, success?: string, close?: () => void, reload?: boolean) => Promise<boolean>;
+export type StatKind = 'base' | 'refine' | 'stone' | 'enchant' | 'rainbow' | 'buff';
+export type StatRow = Record<string, string | number | null>;
+export type CycleData = { cycle: Cycle; sources: Source[]; tables: Record<StatKind, StatRow[]> };
+export type CyclePreview = {
+  preview_id: string; kind: StatKind | 'copy'; version?: number; name?: string; sources?: number; table_counts?: Record<StatKind, number>; message?: string;
+  counts?: { added: number; changed: number; deleted: number };
+  changes?: { action: 'added' | 'changed' | 'deleted'; before: StatRow | null; after: StatRow | null }[];
+  impact?: { message: string; worn_count: number; warehouse_count: number; drop_count: number; worn: { character: string; slot: string; grade: number; before: number | null; after: number | null }[]; warehouse: { account: string; slot: string; grade: number; quantity: number; before: number | null; after: number | null }[]; drops: { account: string; slot: string; grade: number; quantity: number; before: number | null; after: number | null }[] };
+};
+export type GrowthComponent = { value: number | null; status: 'known' | 'unknown' | 'not_applicable'; source: string };
+export type GrowthSummary = { known_subtotal: number; equipment_total: number | null; verified_total: number | null; buffs: { skill: string; stacks: number | null; next_stacks: number | null; next_threshold: number | null; difference: number | null; configured_max: number; message: string }[] };
+export type GrowthReport = GrowthSummary & {
+  character: Character; cycle: Cycle | null;
+  slots: { slot: string; name: string; equipped: boolean; grade: number | null; cycle_name: string | null;
+    settings: { refine_level: number | null; stone_state: 'unknown' | 'none' | 'set'; stone_level: number | null; version: number };
+    components: Record<'base'|'refine'|'stone'|'enchant'|'rainbow', GrowthComponent> }[];
+  calculation: { additional_constitution: number | null; scope_confirmed: boolean; confirmation_valid: boolean; version: number };
+  missing: string[]; buff_message: string;
+};
+export type DataPreview = { preview_id: string; kind: 'import'|'restore'; before: Record<string,number>; after: Record<string,number>; changes: {label:string;added:number;changed:number;deleted:number}[]; names: Record<string,{before:string[];after:string[]}>; unchanged: boolean };
+export type BackupFile = { name: string; size: number; created_at: string };
