@@ -170,7 +170,7 @@ function App() {
       <p className="matrix-note">{account.target_grade === null ? '尚未设置目标，当前不作达标判断。' : account.comparison_mode !== 'grade' ? `目标 ${account.target_grade} 品：高于目标即完全达标；同品级需同时有体质孔、绿字达标。${account.comparison_mode === 'combined' ? '同品级缺孔或绿字未达标时显示淡黄。' : ''}` : `目标 ${account.target_grade} 品：只比较真实品级。`} 体质数据不影响装备比较。</p>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.5</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.6</span></footer>
     {panel && <Modal title={panel === 'people' ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel !== 'people'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{panel === 'people' ? <People data={data} run={run} selectAccount={id => load(id, cycleId)} onDirty={setPeopleDirty}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>

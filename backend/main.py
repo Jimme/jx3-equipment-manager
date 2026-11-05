@@ -32,7 +32,7 @@ def create_app(data_dir: Path | None = None):
         yield
         engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.5", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.6", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.5"}
+        return {"status": "ok", "version": "0.1.6"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -214,6 +214,23 @@ def create_app(data_dir: Path | None = None):
         audit(session, "edit_source", source.id, before, dump(source))
         session.commit()
         return dump(source)
+
+    @app.delete("/api/cycles/{cycle_id}/sources/{source_id}")
+    def delete_source(cycle_id: str, source_id: str, expected_version: int = Query(ge=0), session: Session = DB):
+        cycle = require(session, Cycle, cycle_id)
+        if cycle.archived:
+            raise HTTPException(409, '归档周期只读，请先恢复再编辑')
+        if cycle.version != expected_version:
+            raise HTTPException(409, '周期配置已变化，请重新读取后编辑')
+        source = require(session, Source, source_id)
+        if source.cycle_id != cycle_id:
+            raise HTTPException(404, '此周期下没有该来源')
+        session.execute(update(Template).where(Template.source_id == source_id).values(source_id=None))
+        audit(session, 'delete_source', source_id, dump(source), None)
+        session.delete(source)
+        cycle.version += 1
+        session.commit()
+        return {'deleted': True}
 
     @app.get("/api/templates")
     def templates(equipment_type: str | None = None, session: Session = DB):

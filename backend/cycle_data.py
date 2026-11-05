@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import backup_database
@@ -306,5 +307,26 @@ def make_cycle_data_router(engine, read_database):
         audit(session, 'archive_cycle', cycle_id, before, dump(cycle))
         session.commit()
         return dump(cycle)
+
+    @router.delete('/{cycle_id}')
+    def delete_empty_cycle(cycle_id: str, expected_version: int = Query(ge=0), session: Session = WRITE):
+        cycle = require(session, Cycle, cycle_id)
+        check_version(cycle, expected_version)
+        workspace = session.get(Workspace, 1)
+        if workspace.active_cycle_id == cycle_id:
+            workspace.active_cycle_id = session.scalar(select(Cycle.id).where(
+                Cycle.id != cycle_id, Cycle.archived.is_(False),
+            ).order_by(Cycle.name, Cycle.id).limit(1))
+            session.flush()
+        # Previews are temporary. Foreign keys protect sources, data and history links.
+        session.execute(delete(CycleChangePreview).where(CycleChangePreview.cycle_id == cycle_id))
+        audit(session, 'delete_cycle', cycle_id, dump(cycle), None)
+        session.delete(cycle)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise HTTPException(409, '此周期已有来源、装备、数值或其他记录引用，只能归档') from None
+        return {'active_cycle_id': workspace.active_cycle_id}
 
     return router

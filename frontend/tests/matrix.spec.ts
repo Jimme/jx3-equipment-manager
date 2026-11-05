@@ -90,6 +90,9 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByLabel('默认真实品级').fill('1200');
   await dialog.getByRole('button', { name: '保存来源', exact: true }).click();
   await expect(dialog.getByText('pt · 1200 品')).toBeVisible();
+  page.once('dialog', prompt => prompt.accept());
+  await dialog.getByRole('button', { name: '删除来源', exact: true }).click();
+  await expect(dialog.getByText('pt · 1200 品')).toHaveCount(0);
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(cell).toContainText('1110 品');
   await page.reload();

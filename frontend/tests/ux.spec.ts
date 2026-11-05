@@ -84,6 +84,12 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await dialog.getByRole('button', { name: '确认转入', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect((await state()).warehouse[0].quantity).toBe(2);
+  await request.post(`${prefix}/drops`, { data: { request_id: crypto.randomUUID(), equipment: bad, quantity: 1 } });
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  page.once('dialog', prompt => prompt.accept());
+  await page.getByRole('button', { name: '删除掉落', exact: true }).click();
+  await expect(page.getByRole('button', { name: '删除掉落', exact: true })).toHaveCount(0);
+  expect((await state()).warehouse[0].quantity).toBe(2);
   await page.getByRole('tab', { name: '共享仓库', exact: true }).click();
   const historyCount = (await (await request.get(`${prefix}/history`)).json()).length;
   await page.getByRole('button', { name: '修改U-数量', exact: true }).click();
@@ -113,10 +119,8 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await page.getByLabel('只看仓库可改善').uncheck();
   await expect(page.getByRole('tabpanel').locator('tbody tr')).toHaveCount(23);
   await page.getByRole('tab', { name: '共享仓库', exact: true }).click();
-  await page.getByRole('button', { name: '修改U-数量', exact: true }).click();
-  await page.getByLabel('实际数量').fill('0');
   page.once('dialog', prompt => prompt.accept());
-  await page.getByRole('button', { name: '保存数量', exact: true }).click();
+  await page.getByRole('button', { name: '删除库存', exact: true }).click();
   await expect(page.getByText('共享仓库还没有库存。')).toBeVisible();
   await request.post(`${prefix}/warehouse`, { data: { request_id: crypto.randomUUID(), equipment: { ...equipment, equipment_type: 'ring' }, quantity: 2 } });
   await page.getByRole('button', { name: '刷新', exact: true }).click();

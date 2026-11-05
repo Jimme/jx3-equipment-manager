@@ -43,6 +43,21 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
     if (unsaved && !window.confirm('有未保存的输入，切换周期会丢弃。确定切换？')) return;
     setCycleId(id);setConfig(null);setCopyPreview(null);setSourceOpen(false);setForm(null);
   }
+  function removeCycle() {
+    if (!cycle || unsaved || !window.confirm(`删除空周期「${cycle.name}」？有引用或配置的周期可归档。`)) return;
+    void run(async () => {
+      const result = await api<{ active_cycle_id: string | null }>(`/cycles/${cycle.id}?expected_version=${cycle.version}`, 'DELETE');
+      changeCycle(result.active_cycle_id ?? '');
+      if (!result.active_cycle_id) {
+        setName('');
+        setForm('create');
+      }
+    }, '已删除空周期');
+  }
+  function removeSource(item: Source) {
+    if (!cycle || sourceOpen || !window.confirm(`删除来源预设「${item.name}」？已录装备保留原来源文字和品级。`)) return;
+    void run(() => api(`/cycles/${cycle.id}/sources/${item.id}?expected_version=${cycle.version}`, 'DELETE'), '已删除来源预设');
+  }
   return <>
     {data.workspace.cycles.length > 1 && <label>查看周期<select aria-label="查看周期" value={cycleId} disabled={disabled} onChange={e=>changeCycle(e.target.value)}>{data.workspace.cycles.map(c=><option key={c.id} value={c.id}>{c.name}{c.id===data.workspace.active_cycle_id?'（当前）':c.archived?'（已归档）':''}</option>)}</select></label>}
     {cycle && <div className="cycle-heading"><h3>{current?'当前周期：':'查看周期：'}{cycle.name}</h3>{cycle.archived && <span className="history-badge">已归档 · 只读</span>}</div>}
@@ -52,7 +67,7 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
       <button disabled={disabled || dirty || sourceDirty} title={dirty || sourceDirty?'先保存或取消未完成的编辑，再复制周期':undefined} onClick={()=>{setName('');setForm('copy');}}>复制为新周期</button>
       {!current && !cycle.archived && <button disabled={disabled} onClick={()=>void run(()=>api('/workspace/active-cycle','PUT',{cycle_id:cycleId}),'已切换当前周期')}>设为当前周期</button>}
       <button disabled={disabled || dirty || sourceDirty} title={dirty || sourceDirty?'先保存或取消未完成的编辑':undefined} onClick={()=>{setName('');setForm('create');}}>＋ 新建周期</button>
-      <details className="cycle-management"><summary>管理周期</summary><div className="button-row">{!cycle.archived && <button disabled={disabled || sourceDirty} title={sourceDirty?'先保存或取消来源编辑':undefined} onClick={()=>{setName(cycle.name);setForm('rename');}}>修改周期名称</button>}<button disabled={disabled || dirty || sourceDirty || current} title={current?'当前使用的周期不能归档':undefined} onClick={()=>void run(async()=>{await api(`/cycles/${cycleId}/archive`,'PUT',{expected_version:cycle.version,archived:!cycle.archived});await read(cycleId);},cycle.archived?'已恢复周期':'已归档周期')}>{cycle.archived?'恢复周期':'归档周期'}</button><button disabled={disabled} onClick={()=>{if(unsaved&&!window.confirm('重新读取会丢弃未保存的输入，确定继续？'))return;void run(async()=>{setSourceOpen(false);setEditorEpoch(v=>v+1);await read(cycleId);},'已重新读取配置',undefined,false);}}>重新读取</button></div></details>
+      <details className="cycle-management"><summary>管理周期</summary><div className="button-row">{!cycle.archived && <button disabled={disabled || sourceDirty} title={sourceDirty?'先保存或取消来源编辑':undefined} onClick={()=>{setName(cycle.name);setForm('rename');}}>修改周期名称</button>}<button disabled={disabled || dirty || sourceDirty || current} title={current?'当前使用的周期不能归档':undefined} onClick={()=>void run(async()=>{await api(`/cycles/${cycleId}/archive`,'PUT',{expected_version:cycle.version,archived:!cycle.archived});await read(cycleId);},cycle.archived?'已恢复周期':'已归档周期')}>{cycle.archived?'恢复周期':'归档周期'}</button><button className="danger" disabled={disabled || unsaved} onClick={removeCycle}>删除空周期</button><button disabled={disabled} onClick={()=>{if(unsaved&&!window.confirm('重新读取会丢弃未保存的输入，确定继续？'))return;void run(async()=>{setSourceOpen(false);setEditorEpoch(v=>v+1);await read(cycleId);},'已重新读取配置',undefined,false);}}>重新读取</button></div></details>
     </div>}
     {form && !copyPreview && <form className="inline-form" onSubmit={e=>{e.preventDefault();void run(async()=>{
       if(form==='copy') setCopyPreview(await api<CyclePreview>(`/cycles/${cycleId}/copy-preview`,'POST',{name,expected_version:cycle!.version}));
@@ -64,7 +79,10 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
       <div className="editor-modes"><button className={section==='sources'?'selected':''} onClick={()=>setSection('sources')}>常用来源</button><button className={section==='data'?'selected':''} onClick={()=>setSection('data')}>数值配置{dirty?' · 未保存':''}</button></div>
       <div hidden={section!=='sources'}>
         <p className="hint">选来源时带出默认品级，单件仍可修改；改预设不追溯修改已录装备。</p>
-        <div className="entity-list">{config.sources.map(s=><div className="entity-row" key={s.id}><span>{s.name}<small>{s.short_label} · {s.default_grade===null?'品级未设置':`${s.default_grade} 品`}</small></span>{!cycle?.archived && <button disabled={disabled} onClick={()=>{if(sourceDirty&&!window.confirm('来源还没保存，编辑另一条会丢弃当前输入。确定继续？'))return;setSource(s);setFields({source_type:s.source_type,name:s.name,short_label:s.short_label,default_grade:s.default_grade?.toString()??''});setSourceOpen(true);}}>编辑来源</button>}</div>)}</div>
+        <div className="entity-list">{config.sources.map(s=><div className="entity-row" key={s.id}><span>{s.name}<small>{s.short_label} · {s.default_grade===null?'品级未设置':`${s.default_grade} 品`}</small></span>{!cycle?.archived && <>
+          <button disabled={disabled} onClick={()=>{if(sourceDirty&&!window.confirm('来源还没保存，编辑另一条会丢弃当前输入。确定继续？'))return;setSource(s);setFields({source_type:s.source_type,name:s.name,short_label:s.short_label,default_grade:s.default_grade?.toString()??''});setSourceOpen(true);}}>编辑来源</button>
+          <button className="danger" disabled={disabled || sourceOpen} onClick={() => removeSource(s)}>删除来源</button>
+        </>}</div>)}</div>
         {config.sources.length===0 && <p className="hint">还没有常用来源。例如“25 人普通”，表格中简称为“pt”。</p>}
         {!sourceOpen && !cycle?.archived && <button disabled={disabled} onClick={()=>{setSource(null);setFields(empty);setSourceOpen(true);}}>＋ 添加来源</button>}
         {sourceOpen && !cycle?.archived && <form className="subform" onSubmit={e=>{e.preventDefault();void run(async()=>{

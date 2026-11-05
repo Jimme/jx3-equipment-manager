@@ -61,7 +61,16 @@ export function InventoryWorkspace({ data, run, pending, error }: { data: Data; 
             <details className="item-details"><summary>{choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}</summary><p>{item.equipment.source_name}{item.equipment.name && ` · ${item.equipment.name}`}</p>{item.equipment.note && <p>{item.equipment.note}</p>}</details>
           </td>
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
-          <td>{tab === 'warehouse' ? <button disabled={pending || !data.matrix!.characters.length} onClick={() => equip(item)}>给角色穿戴</button> : <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入仓库</button>}</td>
+          <td><div className="button-row">
+            {tab === 'warehouse' ? <button disabled={pending || !data.matrix!.characters.length} onClick={() => equip(item)}>给角色穿戴</button> : <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入仓库</button>}
+            <button className="danger" disabled={pending} onClick={() => {
+              const label = tab === 'warehouse' ? '库存' : '掉落';
+              if (!window.confirm(`删除${label}「${item.label} · ${item.equipment.actual_grade} 品」的 ${item.quantity} 件记录？`)) return;
+              void run(() => api(`${path}/${tab}/${item.id}/quantity`, 'POST', {
+                request_id: newRequestId(), expected_version: item.version, quantity: 0,
+              }), `已删除${label}`);
+            }}>{tab === 'warehouse' ? '删除库存' : '删除掉落'}</button>
+          </div></td>
         </tr>)}</tbody></table></div>}
       </>}
       {tab === 'gaps' && <>

@@ -39,6 +39,30 @@ def test_empty_configuration_has_no_seed_game_values(client, setup):
     assert result == {'value': None, 'status': 'unknown'}
 
 
+def test_delete_empty_active_cycle_keeps_referenced_cycles(client, setup):
+    original = setup['cycle']['id']
+    assert client.delete(cycle_path(setup), params={'expected_version': state(client, setup)['cycle']['version']}).status_code == 409
+    assert client.get('/api/workspace').json()['active_cycle_id'] == original
+    extra = client.post('/api/cycles', json={'name': '误建的空周期'}).json()
+    result = client.delete(f"/api/cycles/{extra['id']}", params={'expected_version': extra['version']})
+    assert result.json() == {'active_cycle_id': original}
+    assert client.get(f"/api/cycles/{extra['id']}/data").status_code == 404
+
+
+def test_delete_source_preserves_recorded_equipment_snapshot(client, setup):
+    assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup)}).status_code == 200
+    version = state(client, setup)['cycle']['version']
+    path = cycle_path(setup) + '/sources/' + setup['source']['id']
+    assert client.delete(path, params={'expected_version': version - 1}).status_code == 409
+    assert client.delete(path, params={'expected_version': version}).json() == {'deleted': True}
+    assert state(client, setup)['sources'] == []
+    saved = client.get('/api/templates').json()[0]
+    assert saved['source_id'] is None
+    assert saved['source_name'] == setup['source']['name']
+    assert saved['short_label'] == setup['source']['short_label']
+    assert saved['actual_grade'] == 1110
+
+
 @pytest.mark.parametrize('kind,row', [
     ('base', {'actual_grade': 1110, 'equipment_type': 'hat', 'constitution': 0}),
     ('refine', {'actual_grade': 1110, 'equipment_type': 'hat', 'refine_level': 6, 'constitution': None}),
