@@ -18,8 +18,8 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await page.getByRole('button', { name: '添加库存', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('来源预设').selectOption({ label: '流程测试来源' });
-  await dialog.getByLabel('是否有体质孔').selectOption('true');
-  await dialog.getByLabel('绿字是否达标').selectOption('true');
+  await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByLabel('录入数量').fill('2');
   await dialog.getByRole('button', { name: '保存库存', exact: true }).click();
   await expect(dialog).not.toBeVisible();
@@ -50,8 +50,8 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await page.getByRole('button', { name: '记录掉落', exact: true }).click();
   await dialog.getByLabel('库存装备部位').selectOption('weapon');
   await dialog.getByLabel('来源预设').selectOption({ label: '流程测试来源' });
-  await dialog.getByLabel('是否有体质孔').selectOption('true');
-  await dialog.getByLabel('绿字是否达标').selectOption('true');
+  await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByLabel('录入数量').fill('3');
   await dialog.getByText('更多信息', { exact: true }).click();
   await dialog.getByLabel('五彩石', { exact: true }).selectOption('configured');

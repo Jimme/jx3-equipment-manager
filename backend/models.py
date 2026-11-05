@@ -44,6 +44,9 @@ class Character(Base):
     name: Mapped[str] = mapped_column(String)
     sort_order: Mapped[int] = mapped_column(default=0)
     archived: Mapped[bool] = mapped_column(default=False)
+    raid_10: Mapped[bool] = mapped_column(default=False, server_default="0")
+    raid_25pt: Mapped[bool] = mapped_column(default=False, server_default="0")
+    raid_25yx: Mapped[bool] = mapped_column(default=False, server_default="0")
 
 
 class Source(Base):

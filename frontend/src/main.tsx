@@ -2,7 +2,7 @@ import { requestId as newRequestId } from './requestId';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, optionalInteger } from './api';
-import type { Cell, Character, DailyData, Data, Matrix, Run, Source, Template, Workspace } from './types';
+import type { Cell, Character, DailyData, Data, Matrix, RaidDifficulty, Run, Source, Template, Workspace } from './types';
 import { Modal } from './Modal';
 import { EquipmentForm } from './EquipmentForm';
 import { InventoryWorkspace } from './InventoryWorkspace';
@@ -16,6 +16,7 @@ import './style.css';
 
 type Editing = { character: Character; slot: string; slotName: string; cell: Cell };
 type Panel = 'people' | 'sources' | 'data' | null;
+const raidChecks = [['10', '10人'], ['25pt', '25pt'], ['25yx', '25yx']] as const;
 
 function rememberedAccount(): string {
   try { return window.localStorage.getItem('jx3-selected-account') ?? ''; } catch { return ''; }
@@ -97,6 +98,23 @@ function App() {
   const closeGrowth = () => { if (pendingRef.current) return; if (growthDirty && !window.confirm('养成输入还没保存，关闭会丢弃。确定关闭？')) return; setGrowthCharacter(null); setGrowthDirty(false); setError(''); };
   const closeEquipment = () => { if (!pendingRef.current) { setEditing(null); setError(''); } };
 
+  async function setRaidCheck(character: Character, difficulty: RaidDifficulty, checked: boolean) {
+    if (pendingRef.current) return;
+    function showCheck(cleared: boolean) {
+      const update = (row: Character) => row.id === character.id ? { ...row, [`raid_${difficulty}`]: cleared } : row;
+      setData(previous => {
+        if (!previous?.matrix || previous.accountId !== character.account_id) return previous;
+        return { ...previous, characters: previous.characters.map(update), matrix: { ...previous.matrix, characters: previous.matrix.characters.map(update) } };
+      });
+    }
+    showCheck(checked);
+    const saved = await run(() => api(
+      `/accounts/${character.account_id}/characters/${character.id}/raid-checks/${difficulty}`,
+      'PUT', { cleared: checked },
+    ), '', undefined, false);
+    if (!saved) showCheck(character[`raid_${difficulty}`]);
+  }
+
   if (!data) return <main className="loading"><h1>剑网三 · 坦克装备簿</h1>{error ? <><p role="alert">{error}</p><button onClick={() => { setError(''); void refresh(); }}>重试连接</button></> : <p>正在打开装备簿…</p>}</main>;
   const { workspace, matrix, accountId, cycleId } = data;
   const account = matrix?.account;
@@ -120,13 +138,26 @@ function App() {
         <label>目标真实品级<input aria-label="目标真实品级" type="number" min="1" max="2147483647" step="1" list="configured-grades" placeholder="未设置" value={target} onChange={e => setTarget(e.target.value)} disabled={!account || pending}/></label>
         <datalist id="configured-grades">{grades.map(g => <option key={g} value={g}/>)}</datalist><button disabled={!account || pending}>应用</button>
       </form>
-      <label>比较模式<select aria-label="比较模式" value={account?.comparison_mode ?? 'strict'} disabled={!account || pending} onChange={e => { const mode = e.target.value; void run(() => api(`/accounts/${accountId}/preferences`, 'PUT', { target_grade: account?.target_grade, comparison_mode: mode }), '已切换比较模式'); }}><option value="strict">严格：品级 → 体质孔 → 绿字</option><option value="grade">仅品级</option><option value="combined">综合：完全达标 / 仅品级达标 / 品级不足</option></select></label>
+      <label>比较模式<select aria-label="比较模式" value={account?.comparison_mode ?? 'strict'} disabled={!account || pending} onChange={e => { const mode = e.target.value; void run(() => api(`/accounts/${accountId}/preferences`, 'PUT', { target_grade: account?.target_grade, comparison_mode: mode }), '已切换比较模式'); }}><option value="strict">严格达标</option><option value="grade">仅品级</option><option value="combined">综合达标</option></select></label>
     </section>
     {!account ? <section className="empty"><span className="empty-mark">册</span><h2>从第一个游戏账号开始</h2><p>添加账号和角色，即可建立你的 12 部位装备表。体质数据可以以后再补。</p><button className="primary" onClick={() => setPanel('people')}>添加账号与角色</button></section> : <section className="matrix-section">
       <div className="section-heading"><div><h2>{account.name}<span>装备矩阵</span></h2><p>点击格子录入或更换装备；切换周期不改写旧装备。</p></div><label className="check"><input type="checkbox" checked={gapsOnly} onChange={e => setGapsOnly(e.target.checked)}/>只强调未达标</label></div>
       <div className="legend">{account.comparison_mode === 'combined' ? <><span><i className="dot complete-dot"/>完全达标 · 白底</span><span><i className="dot gap-dot"/>仅品级达标 · 淡黄</span><span><i className="dot insufficient-dot"/>品级不足 / 未装备 · 淡红</span></> : <><span><i className="dot gap-dot"/>未达标 / 未装备</span><span><i className="dot met-dot"/>已达标 · 弱化显示</span></>}<span>标签：无体质孔加「-」，绿字达标加「+」</span></div>
       {matrix!.characters.length === 0 ? <div className="empty"><h2>这个账号还没有角色</h2><p>添加角色后，装备部位会按固定顺序自动展开。</p><button onClick={() => setPanel('people')}>添加角色</button></div> : <div className="matrix-scroll" tabIndex={0} aria-label="可横向滚动的装备矩阵"><table className={`matrix mode-${account.comparison_mode} ${gapsOnly ? 'focus-gaps' : ''}`}>
-        <thead><tr><th scope="col">装备部位</th>{matrix!.characters.map(c => <th scope="col" key={c.id}><strong>{c.name}</strong><small>{matrix!.growth[c.id]?.equipment_total===null?`已知体质 ${matrix!.growth[c.id]?.known_subtotal??0} · 待完善`:`装备体质 ${matrix!.growth[c.id]?.equipment_total}`}</small><button className="growth-entry" disabled={pending} onClick={()=>{setError('');setGrowthCharacter(c);}} aria-label={`${c.name} 养成与体质`}>养成与体质</button></th>)}</tr></thead>
+        <thead><tr><th scope="col">装备部位</th>{matrix!.characters.map(c => <th scope="col" key={c.id}>
+          <div className="character-heading">
+            <strong>{c.name}</strong>
+            <fieldset className="raid-checks" disabled={pending} aria-label={`${c.name} 副本完成记录`}>
+              {raidChecks.map(([difficulty, label]) => <label className="check" key={difficulty}>
+                <input type="checkbox" checked={c[`raid_${difficulty}`]} onChange={event => setRaidCheck(c, difficulty, event.target.checked)}/>{label}
+              </label>)}
+            </fieldset>
+          </div>
+          <div className="character-growth">
+            <small>{matrix!.growth[c.id]?.equipment_total === null ? `已知体质 ${matrix!.growth[c.id]?.known_subtotal ?? 0} · 待完善` : `装备体质 ${matrix!.growth[c.id]?.equipment_total}`}</small>
+            <button className="growth-entry" disabled={pending} onClick={() => { setError(''); setGrowthCharacter(c); }} aria-label={`${c.name} 养成与体质`}>养成与体质</button>
+          </div>
+        </th>)}</tr></thead>
         <tbody>{workspace.slots.map((slot, index) => <tr key={slot.key}><th scope="row"><span className="row-number">{String(index + 1).padStart(2, '0')}</span>{slot.name}</th>{matrix!.characters.map(c => {
           const cell = matrix!.cells[c.id][slot.key];
           const equipment = cell.equipment;
@@ -139,7 +170,7 @@ function App() {
       <p className="matrix-note">{account.target_grade === null ? '尚未设置目标，当前不作达标判断。' : account.comparison_mode !== 'grade' ? `目标 ${account.target_grade} 品：高于目标即完全达标；同品级需同时有体质孔、绿字达标。${account.comparison_mode === 'combined' ? '同品级缺孔或绿字未达标时显示淡黄。' : ''}` : `目标 ${account.target_grade} 品：只比较真实品级。`} 体质数据不影响装备比较。</p>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.4</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.5</span></footer>
     {panel && <Modal title={panel === 'people' ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel !== 'people'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{panel === 'people' ? <People data={data} run={run} selectAccount={id => load(id, cycleId)} onDirty={setPeopleDirty}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
@@ -149,7 +180,7 @@ function App() {
       {error && <p role="alert" className="message error">{error}</p>}
       <GrowthEditor accountId={accountId} characterId={growthCharacter.id} run={run} pending={pending} onDirty={setGrowthDirty}/>
     </Modal>}
-    {editing && <Modal title={`${editing.character.name} · ${editing.slotName}`} close={closeEquipment} busy={pending}>
+    {editing && <Modal title={`${editing.character.name} · ${editing.slotName}`} close={closeEquipment} busy={pending} compact>
       {error && <p role="alert" className="message error">{error}</p>}
       <EquipmentEditor data={data} editing={editing} pending={pending} run={run} close={closeEquipment} lastEquipment={lastEquipment} saved={setLastEquipment}/>
     </Modal>}
@@ -167,7 +198,7 @@ function EquipmentEditor({ data, editing, pending, run, close, lastEquipment, sa
   const selected = stock.find(item => item.id === selectedId);
   const form = <EquipmentForm key={mode} data={data} type={type} current={editingExisting ? editing.cell.equipment : null} initialChoices={editingExisting ? editing.cell.choices : null} resetChoicesOnEquipmentChange={!editingExisting} allowCopy={!editingExisting} pending={pending} run={run} close={close} lastEquipment={lastEquipment}
     submitLabel={mode === 'new' ? '确认更换装备' : editingExisting ? '保存记录' : '保存装备'}
-    description={mode === 'new' ? '录入新装备；旧装备不回库，附魔和五彩石不继承。' : `${editing.cell.label}${editing.cell.equipment ? ` · ${editing.cell.equipment.actual_grade}品` : ''}${editing.cell.reasons.length ? ` · ${editing.cell.reasons.join('；')}` : ''}`}
+    description={mode === 'new' ? '录入新装备；旧装备不回库，附魔和五彩石不继承。' : editing.cell.equipment ? [editing.cell.label, `${editing.cell.equipment.actual_grade}品`, ...editing.cell.reasons].join(' · ') : undefined}
     onSave={async (equipment, choices) => { await api(path, 'PUT', { expected_version: editing.cell.version, equipment, choices }); saved({ ...equipment, id: '', actual_grade: equipment.actual_grade! }); }}
     actions={editingExisting && <button type="button" className="danger" onClick={() => { if (window.confirm('清除此格当前装备？旧装备不进入仓库。')) void run(() => api(`${path}?expected_version=${editing.cell.version}`, 'DELETE'), '已清除穿戴', close); }}>清除穿戴</button>}/>;
   return <>

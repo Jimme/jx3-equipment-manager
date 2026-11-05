@@ -1,5 +1,6 @@
 export type Account = { id: string; name: string; sort_order: number; archived: boolean; target_grade: number | null; comparison_mode: 'strict' | 'grade' | 'combined' };
-export type Character = { id: string; account_id: string; name: string; sort_order: number; archived: boolean };
+export type RaidDifficulty = '10' | '25pt' | '25yx';
+export type Character = { id: string; account_id: string; name: string; sort_order: number; archived: boolean } & Record<`raid_${RaidDifficulty}`, boolean>;
 export type Cycle = { id: string; name: string; archived: boolean; version: number; copied_from_id: string | null };
 export type Source = { id: string; cycle_id: string; source_type: string; name: string; short_label: string; default_grade: number | null };
 export type Template = {

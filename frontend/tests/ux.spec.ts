@@ -40,7 +40,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await expect(dialog.getByRole('button', { name: '保存记录', exact: true })).toBeDisabled();
   await dialog.getByText('更多信息', { exact: true }).click();
   await expect(dialog.getByLabel('附魔名称', { exact: true })).toHaveValue('原有附魔');
-  await dialog.getByLabel('绿字是否达标').selectOption('false');
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '未达标', exact: true }).check();
   await expect(dialog.getByLabel('附魔名称', { exact: true })).toHaveValue('原有附魔');
   await dialog.getByRole('button', { name: '保存记录', exact: true }).click();
   await expect(dialog).not.toBeVisible();
@@ -48,8 +48,8 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await page.getByRole('button', { name: '交互甲 帽子', exact: true }).click();
   await dialog.getByRole('button', { name: '手动换装', exact: true }).click();
   await dialog.getByLabel('来源预设').selectOption(source.id);
-  await dialog.getByLabel('是否有体质孔').selectOption('true');
-  await dialog.getByLabel('绿字是否达标').selectOption('true');
+  await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByText('更多信息', { exact: true }).click();
   await expect(dialog.getByLabel('附魔', { exact: true })).toHaveValue('unknown');
   await dialog.getByRole('button', { name: '确认更换装备', exact: true }).click();
@@ -104,7 +104,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await dialog.getByLabel('库存装备部位').selectOption('weapon');
   await expect(dialog.getByLabel('来源预设')).toHaveValue(source.id);
   await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1110');
-  await expect(dialog.getByLabel('是否有体质孔')).toHaveValue('');
+  await expect(dialog.getByRole('group', { name: '是否有体质孔' }).locator('input:checked')).toHaveCount(0);
   await expect(dialog.getByLabel('录入数量')).toBeVisible();
   await dialog.screenshot({ path: '../.tools/screenshots/ux-add.png' });
   await dialog.getByRole('button', { name: '取消', exact: true }).click();

@@ -55,7 +55,7 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
         },'文件校验通过，请核对替换预览',undefined,false);
       }}/></label>
     </div></fieldset>
-    <p className="hint">导入和恢复均先校验、再预览，确认前不改当前数据。32 MB 以内，同数据库版本可在线恢复；旧版本或更大备份请按 README 的停机恢复方法处理。</p>
+    <p className="hint">导入和恢复先校验、再预览。32 MB 以内的兼容备份可在线恢复。更早或更大的备份可按 README 停机恢复。</p>
     <details className="optional-fields"><summary>已有数据库备份 · {backups.length} 份</summary>
       {listError&&<p role="alert">{listError}</p>}<button disabled={pending} onClick={()=>void run(readBackups,'备份列表已刷新',undefined,false)}>刷新备份列表</button>
       {!backups.length&&<p className="hint">还没有数据库备份。点击上方“备份并下载数据库”创建。</p>}

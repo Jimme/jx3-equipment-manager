@@ -64,7 +64,7 @@ with TestClient(create_app(path)) as c:
  assert c.post('/api/data/backups').status_code==201
 with TestClient(create_app(path)) as c:
  assert c.get('/api/workspace').json()['accounts'][0]['id']==account['id']
- assert c.get('/api/health').json()['version']=='0.1.4'
+ assert c.get('/api/health').json()['version']=='0.1.5'
 print('Delivered-source startup and persistence passed.')
 '''
     smoke=subprocess.run([sys.executable,'-c',script],cwd=target,env=smoke_env,capture_output=True)

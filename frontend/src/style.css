@@ -74,16 +74,16 @@ h1,h2,h3,p {
   margin:0
 }
 main {
-  max-width:1680px;
+  max-width:1400px;
   margin:auto;
-  padding:34px 36px 20px
+  padding:18px 24px 16px
 }
 .masthead {
   display:flex;
   justify-content:space-between;
   align-items:center;
   gap:24px;
-  padding-bottom:27px;
+  padding-bottom:14px;
   border-bottom:1px solid var(--line)
 }
 .eyebrow {
@@ -127,8 +127,8 @@ h1 {
   display:flex;
   align-items:flex-end;
   flex-wrap:wrap;
-  gap:20px;
-  padding:22px 0
+  gap:12px;
+  padding:13px 0
 }
 .toolbar>label {
   min-width:170px
@@ -156,7 +156,7 @@ h1 {
   justify-content:space-between;
   align-items:center;
   gap:15px;
-  padding:22px 22px 13px
+  padding:12px 16px 8px
 }
 .section-heading h2 {
   font-size:18px
@@ -195,7 +195,7 @@ h1 {
   flex-wrap:wrap;
   color:var(--muted);
   font-size:11px;
-  padding:0 22px 17px
+  padding:0 16px 10px
 }
 .legend span {
   display:flex;
@@ -235,17 +235,15 @@ h1 {
   top:0;
   z-index:2;
   background:#edf2ed;
-  padding:16px 18px;
-  min-width:170px;
-  height:70px;
+  padding:9px 12px;
+  min-width:150px;
   font-size:14px
 }
 .matrix thead th small {
   display:block;
   font-size:10px;
   font-weight:400;
-  color:#718679;
-  margin-top:7px
+  color:#718679
 }
 .matrix th:first-child {
   position:sticky;
@@ -261,7 +259,7 @@ h1 {
   background:#edf2ed
 }
 .matrix tbody th {
-  padding:10px 16px;
+  padding:6px 12px;
   font-weight:500
 }
 .row-number {
@@ -272,7 +270,7 @@ h1 {
 }
 .matrix td {
   padding:0;
-  min-width:170px
+  min-width:150px
 }
 .equipment-cell {
   background:transparent;
@@ -281,10 +279,10 @@ h1 {
   display:flex;
   flex-direction:column;
   width:100%;
-  height:47px;
-  padding:6px 16px;
+  height:40px;
+  padding:4px 10px;
   text-align:left;
-  gap:4px
+  gap:2px
 }
 .equipment-cell:hover {
   background:#edf2e9;
@@ -304,6 +302,33 @@ h1 {
   gap:14px;
   color:#89998d
 }
+.cell-top strong {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis
+}
+.matrix thead th strong {
+  overflow-wrap:anywhere
+}
+.character-heading,.character-growth {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:4px 8px
+}
+.raid-checks {
+  display:flex;
+  flex-wrap:wrap;
+  gap:2px 6px
+}
+.raid-checks label {
+  gap:2px;
+  min-height:22px;
+  font-size:11px;
+  cursor:pointer
+}
+.raid-checks input { margin:0 }
+.character-growth { margin-top:4px }
 .cell-gap,.cell-missing {
   background:#fbf5e9
 }
@@ -530,7 +555,6 @@ h3 {
 .item-details { margin-top: 5px; font-size: 11px; color: var(--muted); }
 .item-details summary { cursor: pointer; overflow-wrap: anywhere; }
 .item-details p { margin: 7px 0; }
-.secondary-actions { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
 .editor-modes { display: flex; gap: 5px; margin: 0 0 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .editor-modes button { border: 0; background: transparent; border-radius: 0; font-size: 12px; padding: 10px; color: var(--muted); }
 .editor-modes button.selected { color: var(--ink); box-shadow: inset 0 -2px var(--accent); font-weight: 600; }
@@ -641,32 +665,8 @@ h3 {
 .dialog-actions .danger {
   margin-right:auto
 }
-.reuse-row {
-  display:flex;
-  gap:10px;
-  align-items:flex-end;
-  padding:12px;
-  background:#f1f5ef;
-  border-radius:6px
-}
-.reuse-row label {
-  flex:1
-}
-.reuse-row select {
-  font-size:12px
-}
-.reuse-row button {
-  font-size:12px
-}
 button+button {
   margin-left:0
-}
-
-@media(min-width:1200px) {
-  .matrix td,.matrix thead th {
-  min-width:190px
-}
-
 }
 
 @media(max-width:760px) {
@@ -715,7 +715,7 @@ h1 {
   padding:9px 6px
 }
 .section-heading {
-  padding:18px 14px;
+  padding:12px 14px;
   align-items:flex-start;
   flex-direction:column
 }
@@ -729,7 +729,7 @@ h1 {
   width:103px
 }
 .matrix tbody th {
-  padding:15px 10px
+  padding:6px 10px
 }
 .row-number {
   margin-right:7px
@@ -763,9 +763,6 @@ dialog {
 .dialog-actions button {
   padding:9px 10px
 }
-.reuse-row {
-  flex-wrap:wrap
-}
 
 }
 
@@ -773,7 +770,7 @@ dialog {
 .growth-table { width:100%; }
 .growth-table th small { display:block; font-weight:normal; color:var(--muted); margin-top:5px; white-space:normal; }
 .growth-table select { min-width:105px; }
-.growth-entry { margin-top:7px; padding:5px 9px; font-size:11px; font-weight:normal; }
+.growth-entry { padding:4px 7px; font-size:11px; font-weight:normal; }
 .growth-missing { font-size:12px; line-height:1.8; padding-left:22px; }
 .growth-table { table-layout:fixed; }
 .growth-table th:first-child { width:32%; }
@@ -787,3 +784,22 @@ dialog {
 .backup-row { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid var(--line); padding:12px 0; flex-wrap:wrap; }
 .backup-row strong { display:block; overflow-wrap:anywhere; font-size:12px; }
 .backup-row small { display:block; color:var(--muted); margin-top:5px; }
+
+.compact-dialog { width: 520px; padding: 16px; }
+.compact-dialog .dialog-heading { padding-bottom: 8px; margin-bottom: 10px; }
+.compact-dialog .form-grid { gap: 10px; margin: 10px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compact-dialog .editor-modes { margin-bottom: 8px; }
+.compact-dialog .optional-fields { margin: 10px 0; padding-top: 6px; }
+.compact-dialog .dialog-actions { gap: 6px; margin-top: 10px; }
+.compact-dialog .dialog-actions button { padding: 6px 10px; font-size: 13px; }
+.equipment-copy { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; font-size: 12px; }
+.equipment-copy button { padding: 5px 9px; }
+.equipment-copy details[open] { flex-basis: 100%; }
+.equipment-copy summary { cursor: pointer; color: var(--accent); }
+.equipment-copy details label { margin-top: 6px; }
+.binary-choice legend { padding: 0; margin-bottom: 5px; font-size: 12px; font-weight: 600; color: #536a60; }
+.binary-choice > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.binary-choice label { flex-direction: row; align-items: center; gap: 4px; min-height: 30px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.binary-choice label:has(:checked) { background: #e5efe8; border-color: #86aa95; color: var(--ink); }
+.binary-choice input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
+.binary-choice small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }

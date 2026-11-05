@@ -224,7 +224,7 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
     from alembic import command
     from alembic.config import Config
     from backend.database import ROOT
-    from backend.models import Account, Character, Cycle, EquipmentConfig, Template, Workspace, WornEquipment
+    from backend.models import Account, Cycle, EquipmentConfig, Template, Workspace, WornEquipment
     from sqlalchemy.exc import IntegrityError
 
     engine = make_engine(tmp_path)
@@ -236,7 +236,10 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
         conn.exec_driver_sql("INSERT INTO equipment_cycles (id,name,archived) VALUES ('cycle','旧周期',0)")
         conn.exec_driver_sql("INSERT INTO workspace_settings (id,active_cycle_id) VALUES (1,'cycle')")
         conn.execute(Account.__table__.insert().values(id='account', name='已有账号', target_grade=1110))
-        conn.execute(Character.__table__.insert().values(id='character', account_id='account', name='已有角色'))
+        conn.exec_driver_sql(
+            'INSERT INTO characters (id, account_id, name, sort_order, archived) VALUES (?, ?, ?, 0, 0)',
+            ('character', 'account', '已有角色'),
+        )
         conn.execute(Template.__table__.insert().values(id='template', cycle_origin_id='cycle', source_type='测试', source_name='旧来源', short_label='旧', equipment_type='hat', actual_grade=1110, has_constitution_socket=False, green_stats_ok=True))
         conn.exec_driver_sql("INSERT INTO equipment_configs (id,template_id,enchant_state,rainbow_state) VALUES ('config','template','unknown','not_applicable')")
         conn.execute(WornEquipment.__table__.insert().values(character_id='character', slot='hat', config_id='config', version=3))
@@ -248,7 +251,7 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
         assert conn.exec_driver_sql('SELECT comparison_mode FROM game_accounts').scalar() == 'strict'
         assert conn.exec_driver_sql('SELECT version FROM character_equipment').scalar() == 3
         assert conn.exec_driver_sql('SELECT account_id FROM audit_events').scalar() == 'account'
-        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0006'
+        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0007'
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE game_accounts SET comparison_mode='combined'")
     with pytest.raises(IntegrityError), engine.begin() as conn:

@@ -79,7 +79,7 @@ export function InventoryWorkspace({ data, run, pending, error }: { data: Data; 
       </>}
       {tab === 'history' && <>{historyError && <p role="alert" className="message error">{historyError}</p>}{historyLoading ? <p className="small-empty">正在读取操作记录…</p> : history.length === 0 ? <p className="small-empty">还没有装备、仓库或掉落操作记录。</p> : <ol className="history-list">{history.map(item => <li key={item.id}><div><strong>{item.title}</strong><time>{new Date(item.created_at).toLocaleString('zh-CN')}</time></div><p>{item.summary}</p></li>)}</ol>}</>}
     </div>
-    {dialog && <Modal title={modalTitle} close={close} busy={pending}>{error && <p role="alert" className="message error">{error}</p>}
+    {dialog && <Modal title={modalTitle} close={close} busy={pending} compact>{error && <p role="alert" className="message error">{error}</p>}
       {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
       {dialog.kind === 'equip' && <WarehouseEquip key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} initialCharacter={dialog.characterId} initialSlot={dialog.slot} fixedTarget={!!dialog.characterId && !!dialog.slot} run={run} pending={pending} close={close}/>}
       {dialog.kind === 'transfer' && <DropTransfer key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}

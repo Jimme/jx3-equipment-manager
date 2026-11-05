@@ -48,7 +48,7 @@ def seed_worn(client, setup):
 def test_empty_and_seeded_export_round_trip_preserves_null_and_zero(client,setup,tmp_path):
     seed_worn(client,setup)
     payload=export(client)
-    assert payload['schema_revision']=='0006'
+    assert payload['schema_revision']=='0007'
     assert 'cycle_change_previews' not in payload['tables'] and 'mutation_receipts' in payload['tables']
     assert payload['tables']['equipment_templates'][0]['base_constitution_override']==0
     assert payload['tables']['character_slot_settings'][0]['refine_level'] is None
@@ -74,6 +74,44 @@ def test_noop_does_not_backup_or_write_audit(client,setup):
     assert apply(client,preview).json()=={'changed':False,'backup':None}
     assert export(client)['tables']==before['tables']
     assert client.get('/api/data/backups').json()==[]
+
+
+def test_raid_checks_are_independent_and_round_trip(client, setup, tmp_path):
+    account_id = setup['account']['id']
+    character_id = setup['character']['id']
+    base = f'/api/accounts/{account_id}/characters/{character_id}/raid-checks'
+    assert client.put(base + '/25pt', json={'cleared': True}).json() == {'cleared': True}
+    assert client.put(base + '/10', json={'cleared': 'true'}).status_code == 422
+    assert client.put(base + '/unknown', json={'cleared': True}).status_code == 422
+    other = client.post('/api/accounts', json={'name': '另一个测试账号'}).json()['id']
+    assert client.put(f'/api/accounts/{other}/characters/{character_id}/raid-checks/25yx',
+                      json={'cleared': True}).status_code == 404
+    payload = export(client)
+    character = payload['tables']['characters'][0]
+    assert (character['raid_10'], character['raid_25pt'], character['raid_25yx']) == (False, True, False)
+    with TestClient(create_app(tmp_path / 'destination')) as destination:
+        assert apply(destination, review(destination, payload)).status_code == 200
+        assert destination.get(f'/api/accounts/{account_id}/characters').json() == [character]
+
+
+def test_previous_backup_formats_default_raid_checks_to_unchecked(client, setup, tmp_path):
+    payload = export(client)
+    payload['schema_revision'] = '0006'
+    raid_fields = ('raid_10', 'raid_25pt', 'raid_25yx')
+    for character in payload['tables']['characters']:
+        for field in raid_fields:
+            character.pop(field)
+    assert review(client, payload)['unchanged']
+    backup = client.post('/api/data/backups').json()['name']
+    path = tmp_path / 'old.sqlite3'
+    path.write_bytes(client.get(f'/api/data/backups/{backup}').content)
+    with sqlite3.connect(path) as connection:
+        for field in raid_fields:
+            connection.execute(f'ALTER TABLE characters DROP COLUMN {field}')
+        connection.execute("UPDATE alembic_version SET version_num = '0006'")
+    response = client.post('/api/data/restore-preview', content=path.read_bytes())
+    assert response.status_code == 200, response.text
+    assert response.json()['unchanged']
 
 
 def test_stale_preview_and_expired_preview_do_not_overwrite(client,setup):

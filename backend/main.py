@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,7 +17,7 @@ from .inventory import make_inventory_router
 from .cycle_data import make_cycle_data_router
 from .growth import make_growth_router, growth_report
 from .data_management import make_data_router
-from .schemas import AccountPreferences, ActiveCycle, CycleInput, EquipInput, NamedInput, SourceInput, TemplateInput
+from .schemas import AccountPreferences, ActiveCycle, CycleInput, EquipInput, NamedInput, RaidCheckInput, SourceInput, TemplateInput
 
 
 def create_app(data_dir: Path | None = None):
@@ -31,7 +32,7 @@ def create_app(data_dir: Path | None = None):
         yield
         engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.4", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.5", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -53,7 +54,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.4"}
+        return {"status": "ok", "version": "0.1.5"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -165,6 +166,16 @@ def create_app(data_dir: Path | None = None):
         audit(session, "edit_character", character.id, before, dump(character), account_id)
         session.commit()
         return dump(character)
+
+    @app.put("/api/accounts/{account_id}/characters/{character_id}/raid-checks/{difficulty}")
+    def set_raid_check(account_id: str, character_id: str, difficulty: Literal['10', '25pt', '25yx'],
+                       payload: RaidCheckInput, session: Session = DB):
+        account, character = account_character(session, account_id, character_id)
+        if account.archived or character.archived:
+            raise HTTPException(409, "请先恢复账号和角色")
+        setattr(character, f'raid_{difficulty}', payload.cleared)
+        session.commit()
+        return {"cleared": payload.cleared}
 
     @app.get("/api/cycles/{cycle_id}/sources")
     def sources(cycle_id: str, session: Session = DB):

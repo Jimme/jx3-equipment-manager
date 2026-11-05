@@ -17,6 +17,10 @@ class NamedInput(Input):
     archived: bool = False
 
 
+class RaidCheckInput(Input):
+    cleared: Annotated[bool, Field(strict=True)]
+
+
 class CycleInput(Input):
     name: Name
     expected_version: Nonnegative | None = None

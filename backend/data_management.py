@@ -29,7 +29,8 @@ TRANSIENT = {'cycle_change_previews', 'data_change_previews'}
 TABLES = [table for table in Base.metadata.sorted_tables if table.name not in TRANSIENT]
 TABLE_MAP = {table.name: table for table in TABLES}
 FORMAT = 'jx3-equipment-workspace'
-REVISION = '0006'
+REVISION = '0007'
+RAID_COLUMNS = {'raid_10', 'raid_25pt', 'raid_25yx'}
 
 
 def now():
@@ -229,11 +230,19 @@ def fill_tables(session, tables):
 def validate_document(payload, directory):
     if not isinstance(payload, dict) or set(payload) != {'format', 'format_version', 'schema_revision', 'exported_at', 'tables'}:
         reject('不是完整的工作空间 JSON 文件')
-    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] != REVISION:
+    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', REVISION):
         reject('文件版本不兼容，请使用当前版本导出文件；旧数据库备份请按停机恢复说明处理')
     if not isinstance(payload['exported_at'], str):
         reject('导出时间格式无效')
     tables = payload['tables']
+    if payload['schema_revision'] == '0006' and isinstance(tables, dict) and isinstance(tables.get('characters'), list):
+        old_columns = {column.name for column in TABLE_MAP['characters'].columns} - RAID_COLUMNS
+        characters = []
+        for row in tables['characters']:
+            if not isinstance(row, dict) or set(row) != old_columns:
+                reject('旧版角色数据字段不匹配')
+            characters.append({**row, **dict.fromkeys(RAID_COLUMNS, False)})
+        tables = {**tables, 'characters': characters}
     validate_types(tables)
     validate_business(tables)
     with tempfile.TemporaryDirectory(prefix='jx3-validate-') as temporary:
@@ -274,7 +283,8 @@ def sqlite_document(raw, directory):
             with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as connection:
                 if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                     reject('备份完整性检查失败')
-                if connection.execute('SELECT version_num FROM alembic_version').fetchall() != [(REVISION,)]:
+                revisions = connection.execute('SELECT version_num FROM alembic_version').fetchall()
+                if revisions not in ([(REVISION,)], [('0006',)]):
                     reject('此备份不属于当前数据库版本，请按停机恢复说明使用匹配版本再升级')
                 objects = connection.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','trigger')").fetchall()
                 expected = set(Base.metadata.tables) | {'alembic_version'}
@@ -282,19 +292,20 @@ def sqlite_document(raw, directory):
                     reject('备份结构不匹配或包含非应用数据对象')
                 tables = {}
                 for table in TABLES:
-                    if {r[1] for r in connection.execute(f'PRAGMA table_info("{table.name}")')} != {c.name for c in table.columns}:
+                    columns = [c for c in table.columns if not (revisions == [('0006',)] and table.name == 'characters' and c.name in RAID_COLUMNS)]
+                    if {r[1] for r in connection.execute(f'PRAGMA table_info("{table.name}")')} != {c.name for c in columns}:
                         reject('备份字段与当前版本不一致')
-                    values = connection.execute('SELECT ' + ','.join('"'+c.name+'"' for c in table.columns) + ' FROM "'+table.name+'"').fetchall()
+                    values = connection.execute('SELECT ' + ','.join('"'+c.name+'"' for c in columns) + ' FROM "'+table.name+'"').fetchall()
                     rows = []
                     for values_row in values:
                         row = {}
-                        for column, value in zip(table.columns, values_row):
+                        for column, value in zip(columns, values_row):
                             row[column.name] = bool(value) if column.type.python_type is bool and type(value) is int and value in (0, 1) else value
                         rows.append(row)
                     tables[table.name] = rows
         except sqlite3.Error:
             reject('SQLite 备份无法读取或结构不完整')
-    return validate_document(document(tables), directory)
+    return validate_document({**document(tables), 'schema_revision': revisions[0][0]}, directory)
 
 
 async def read_upload(request):
