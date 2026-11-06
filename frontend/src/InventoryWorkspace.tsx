@@ -8,16 +8,21 @@ import { EquipmentForm } from './EquipmentForm';
 import { Modal } from './Modal';
 import type { Data, HistoryItem, InventoryItem, Run } from './types';
 
-type Target = 'warehouse' | 'drops';
-export type InventoryTab = Target | 'gaps' | 'history';
-type Dialog = ({ kind: 'add'; target: Target } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
+export type StockTarget = 'warehouse' | 'drops';
+export type InventorySelection = { tab: StockTarget | 'gaps' | 'history'; equipmentType?: string };
+export type InventoryDialog = ({ kind: 'add'; target: StockTarget; equipmentType?: string } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
 
 function equipmentName(data: Data, type: string) {
   return type === 'ring' ? '戒指' : data.workspace.slots.find(s => s.key === type)?.name ?? type;
 }
 
-export function InventoryWorkspace({ data, run, pending, error, tab, setTab }: { data: Data; run: Run; pending: boolean; error: string; tab: InventoryTab; setTab: (tab: InventoryTab) => void }) {
-  const [dialog, setDialog] = useState<Dialog | null>(null);
+export function InventoryWorkspace({ data, run, pending, error, selection, setSelection, dialog, setDialog }: {
+  data: Data; run: Run; pending: boolean; error: string;
+  selection: InventorySelection | null; setSelection: (selection: InventorySelection | null) => void;
+  dialog: InventoryDialog | null; setDialog: (dialog: InventoryDialog | null) => void;
+}) {
+  const tab = selection?.tab;
+  const equipmentType = selection?.equipmentType;
   const [improvementsOnly, setImprovementsOnly] = useState(true);
   const [characterFilter, setCharacterFilter] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -40,26 +45,31 @@ export function InventoryWorkspace({ data, run, pending, error, tab, setTab }: {
   }, [tab, data.daily, path]);
 
   const equip = (item: InventoryItem, characterId?: string, slot?: string) => setDialog({ kind: 'equip', item, characterId, slot, requestId: newRequestId() });
-  const items = tab === 'warehouse' ? daily.warehouse : daily.drops;
+  const stockTab = tab === 'warehouse' || tab === 'drops' ? tab : null;
+  const stock = stockTab ? daily[stockTab] : [];
+  const items = equipmentType ? stock.filter(item => item.equipment.equipment_type === equipmentType) : stock;
   const warehouseById = useMemo(() => new Map(daily.warehouse.map(item => [item.id, item])), [daily.warehouse]);
   const visibleGaps = useMemo(() => tab === 'gaps' ? daily.gaps.filter(gap =>
     (!characterFilter || gap.character_id === characterFilter) && (!improvementsOnly || gap.candidate_ids.length > 0)
   ) : [], [tab, daily.gaps, characterFilter, improvementsOnly]);
-  const titles = { warehouse: '共享仓库', drops: '本次团本掉落', gaps: '缺口明细', history: '操作记录' };
-  const modalTitle = dialog?.kind === 'add' ? (dialog.target === 'warehouse' ? '添加共享库存' : '记录团本掉落') : dialog?.kind === 'equip' ? '从仓库给角色穿戴' : '确认获得并转入仓库';
+  const stockTitle = stockTab === 'warehouse' ? '共享仓库' : '团本掉落';
+  const modalTitle = dialog?.kind === 'add' ? (dialog.target === 'warehouse' ? '添加共享库存' : '记录团本掉落') + (dialog.equipmentType ? ` · ${equipmentName(data, dialog.equipmentType)}` : '') : dialog?.kind === 'equip' ? '从仓库给角色穿戴' : '确认获得并转入仓库';
 
   return <section id="inventory" className="daily-section" aria-label="账号仓库与团本掉落">
     <div className="daily-heading">
-      <div className="menu-tabs" role="tablist" aria-label="仓库与备忘功能">{(Object.keys(titles) as InventoryTab[]).map(key => <button key={key} role="tab" aria-selected={tab === key} aria-controls="daily-panel" id={`tab-${key}`} disabled={pending} onClick={() => setTab(key)}>{titles[key]}</button>)}</div>
-      {(tab === 'warehouse' || tab === 'drops') && <div className="button-row"><button className="primary" disabled={pending || !data.cycleId} onClick={() => setDialog({ kind: 'add', target: tab, requestId: newRequestId() })}>{tab === 'warehouse' ? '添加库存' : '记录掉落'}</button>
-            {tab === 'drops' && daily.drops.length > 0 && <button className="danger" disabled={pending} onClick={() => { if (window.confirm('清空本账号的本次掉落备忘？共享仓库和角色装备不会改变。')) void run(() => api(`${path}/drops/clear`, 'POST', { request_id: newRequestId(), expected_version: daily.drop_version }), '已清空掉落备忘，仓库未改变'); }}>清空本次掉落</button>}
+      {stockTab && <h3>{stockTitle}{equipmentType && ` · ${equipmentName(data, equipmentType)}`}</h3>}
+      {stockTab && <div className="button-row">{equipmentType && <button className="primary" disabled={pending || !data.cycleId} onClick={() => setDialog({ kind: 'add', target: stockTab, equipmentType, requestId: newRequestId() })}>{stockTab === 'warehouse' ? '添加此部位库存' : '记录此部位掉落'}</button>}
+            {equipmentType && <button disabled={pending} onClick={() => setSelection({ tab: stockTab })}>查看全部部位</button>}
+            {stockTab === 'drops' && !equipmentType && daily.drops.length > 0 && <button className="danger" disabled={pending} onClick={() => { if (window.confirm('清空本账号的本次掉落备忘？共享仓库和角色装备不会改变。')) void run(() => api(`${path}/drops/clear`, 'POST', { request_id: newRequestId(), expected_version: daily.drop_version }), '已清空掉落备忘，仓库未改变'); }}>清空本次掉落</button>}
       </div>}
+      <div className="menu-tabs" aria-label="辅助信息">{([['gaps', '缺口明细'], ['history', '操作记录']] as const).map(([key, label]) => <button key={key} aria-pressed={tab === key} aria-controls="daily-panel" disabled={pending} onClick={() => setSelection(tab === key ? null : { tab: key })}>{label}</button>)}</div>
+      {stockTab && <button className="quiet-button" disabled={pending} onClick={() => setSelection(null)}>收起明细</button>}
     </div>
-    <div className="daily-content" role="tabpanel" id="daily-panel" aria-labelledby={`tab-${tab}`}>
+    <div className="daily-content" id="daily-panel" role="region" aria-label="装备明细" hidden={!tab}>
       {(tab === 'warehouse' || tab === 'drops') && <>
         {!data.cycleId && <p className="hint">请先在“周期与来源”中创建装备周期。</p>}
         {items.length === 0 ? <p className="small-empty">{tab === 'warehouse' ? '共享仓库还没有库存。' : '本次还没有记录掉落。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>装备</th><th>数量</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
-          <td><strong>{equipmentName(data, item.equipment.equipment_type)} · {item.label} · {item.equipment.actual_grade} 品</strong>
+          <td><strong>{!equipmentType && `${equipmentName(data, item.equipment.equipment_type)} · `}{item.label} · {item.equipment.actual_grade} 品</strong>
             <details className="item-details"><summary>{choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}</summary><p>{item.equipment.source_name}{item.equipment.name && ` · ${item.equipment.name}`}</p>{item.equipment.note && <p>{item.equipment.note}</p>}</details>
           </td>
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
@@ -91,7 +101,7 @@ export function InventoryWorkspace({ data, run, pending, error, tab, setTab }: {
       {tab === 'history' && <>{historyError && <p role="alert" className="message error">{historyError}</p>}{historyLoading ? <p className="small-empty">正在读取操作记录…</p> : history.length === 0 ? <p className="small-empty">还没有装备、仓库或掉落操作记录。</p> : <ol className="history-list">{history.map(item => <li key={item.id}><div><strong>{item.title}</strong><time>{new Date(item.created_at).toLocaleString('zh-CN')}</time></div><p>{item.summary}</p></li>)}</ol>}</>}
     </div>
     {dialog && <Modal title={modalTitle} close={close} busy={pending} compact>{error && <p role="alert" className="message error">{error}</p>}
-      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
+      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
       {dialog.kind === 'equip' && <WarehouseEquip key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} initialCharacter={dialog.characterId} initialSlot={dialog.slot} fixedTarget={!!dialog.characterId && !!dialog.slot} run={run} pending={pending} close={close}/>}
       {dialog.kind === 'transfer' && <DropTransfer key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
     </Modal>}
@@ -100,16 +110,16 @@ export function InventoryWorkspace({ data, run, pending, error, tab, setTab }: {
 
 type ActionProps = { data: Data; run: Run; pending: boolean; close: () => void; requestId: string };
 
-function AddInventory({ data, target, requestId, run, pending, close }: ActionProps & { target: Target }) {
-  const [type, setType] = useState('hat');
+function AddInventory({ data, target, equipmentType, requestId, run, pending, close }: ActionProps & { target: StockTarget; equipmentType?: string }) {
+  const [type, setType] = useState(equipmentType ?? 'hat');
   const [quantity, setQuantity] = useState('1');
   return <EquipmentForm data={data} type={type} run={run} pending={pending} close={close} submitLabel={target === 'warehouse' ? '保存库存' : '保存掉落'} success={target === 'warehouse' ? '已添加共享库存' : '已记录掉落'}
-    leadingFields={<div className="form-grid"><label>装备部位<select aria-label="库存装备部位" value={type} onChange={e => setType(e.target.value)}>{data.workspace.slots.filter(s => s.key !== 'ring2').map(s => <option key={s.key} value={s.key === 'ring1' ? 'ring' : s.key}>{s.key === 'ring1' ? '戒指（两格通用）' : s.name}</option>)}</select></label><label>数量<input aria-label="录入数量" type="number" min="1" max="2147483647" required value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div>}
+    leadingFields={<div className="form-grid">{!equipmentType && <label>装备部位<select aria-label="库存装备部位" value={type} onChange={e => setType(e.target.value)}>{data.workspace.slots.filter(s => s.key !== 'ring2').map(s => <option key={s.key} value={s.key === 'ring1' ? 'ring' : s.key}>{s.key === 'ring1' ? '戒指（两格通用）' : s.name}</option>)}</select></label>}<label>数量<input aria-label="录入数量" type="number" min="1" max="2147483647" required value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div>}
     onSave={(equipment, choices) => api(`/accounts/${data.accountId}/${target}`, 'POST', { request_id: requestId, equipment, choices, quantity: optionalInteger(quantity) })}/>;
 }
 
 function DropTransfer({ data, item, requestId, run, pending, close }: ActionProps & { item: InventoryItem }) {
-  const [quantity, setQuantity] = useState(String(item.quantity));
+  const [quantity, setQuantity] = useState('1');
   return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${data.accountId}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: item.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', close); }}><fieldset disabled={pending}>
     <p className="hint">{equipmentName(data, item.equipment.equipment_type)} · {item.label} · {item.equipment.actual_grade} 品，本次记录 {item.quantity} 件。</p>
     {item.quantity > 1 && <label>实际获得的数量<input aria-label="实际获得的数量" required type="number" min="1" max={item.quantity} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>}

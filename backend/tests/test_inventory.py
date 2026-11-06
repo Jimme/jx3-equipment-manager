@@ -251,8 +251,14 @@ def test_gaps_use_mode_and_show_shared_candidate_without_allocating(client, setu
     assert len(hats) == 2
     assert all(g['candidate_ids'] == [stock['id']] for g in hats)
     assert state['warehouse'][0]['quantity'] == 1
+    compact_path = account_path + '/daily?skip_unconfigured_gaps=true'
+    assert client.get(compact_path).json() == state
     client.put(account_path + '/preferences', json={'target_grade': 1110, 'comparison_mode': 'grade'})
     assert all(g['character_id'] == second['id'] for g in daily(client, setup)['gaps'] if g['slot'] == 'hat')
+    client.patch(account_path + '/preferences', json={'target_grade': None})
+    unset_state = daily(client, setup)
+    assert unset_state['gaps']
+    assert client.get(compact_path).json() == {**unset_state, 'gaps': []}
 
 
 def test_inventory_backup_restore_preserves_receipts_and_unknowns(client, setup, tmp_path):

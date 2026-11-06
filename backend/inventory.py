@@ -105,13 +105,17 @@ def make_inventory_router(engine, read_database):
     WRITE = Depends(write_database)
 
     @router.get('/daily')
-    def daily(account_id: str, session: Session = DB):
+    def daily(account_id: str, skip_unconfigured_gaps: bool = False, session: Session = DB):
         account = active_account(session, account_id)
         warehouse = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
             inventory_rows(WarehouseStack).where(WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id))]
         drops = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
             inventory_rows(RaidDrop).where(RaidDrop.account_id == account_id).order_by(RaidDrop.created_at, RaidDrop.id))]
         state = session.get(RaidMemoState, account_id)
+        gaps = []
+        result = {'warehouse': warehouse, 'drops': drops, 'drop_version': state.version if state else 0, 'gaps': gaps}
+        if skip_unconfigured_gaps and account.target_grade is None:
+            return result
         characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
         worn = {(row.character_id, row.slot): (row, template) for row, template in session.execute(
             select(WornEquipment, Template).select_from(WornEquipment)
@@ -130,21 +134,20 @@ def make_inventory_router(engine, read_database):
                 item['id'], rank(equipment['actual_grade'], equipment['has_constitution_socket'], equipment['green_stats_ok']),
             ))
 
-        gaps = []
         for character in characters:
             for slot, slot_name in SLOTS:
                 record, template = worn[(character.id, slot)]
-                result = compare(template.actual_grade if template else None, template.has_constitution_socket if template else False,
+                comparison = compare(template.actual_grade if template else None, template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False, account.target_grade, account.comparison_mode)
-                if result['status'] == 'met':
+                if comparison['status'] == 'met':
                     continue
                 current_rank = rank(template.actual_grade, template.has_constitution_socket, template.green_stats_ok) if template else rank(-1)
                 candidates = [item_id for item_id, candidate_rank in candidates_by_type[equipment_type(slot)] if candidate_rank > current_rank]
                 gaps.append({'character_id': character.id, 'character_name': character.name, 'slot': slot, 'slot_name': slot_name,
                              'current_label': label(template.short_label, template.has_constitution_socket, template.green_stats_ok) if template else '未装备',
                              'actual_grade': template.actual_grade if template else None, 'expected_version': record.version,
-                             'target_grade': account.target_grade, **result, 'candidate_ids': candidates})
-        return {'warehouse': warehouse, 'drops': drops, 'drop_version': state.version if state else 0, 'gaps': gaps}
+                             'target_grade': account.target_grade, **comparison, 'candidate_ids': candidates})
+        return result
 
     @router.post('/warehouse')
     def warehouse_add(account_id: str, payload: InventoryAdd, session: Session = WRITE):

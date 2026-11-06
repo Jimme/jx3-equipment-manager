@@ -30,7 +30,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
     await expect(dialog.locator('.entity-row').filter({ hasText: `测试角色${i}` })).toBeVisible();
     if ([1, 3, 6].includes(i)) {
       await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-      await expect(page.locator('.matrix thead th')).toHaveCount(i + 1);
+      await expect(page.locator('.matrix thead th')).toHaveCount(i + 3);
       await expect(page.locator('.matrix tbody tr')).toHaveCount(12);
       await page.getByRole('button', { name: '账号与角色', exact: true }).click();
     }
@@ -138,7 +138,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await page.setViewportSize({ width: 1440, height: 900 });
   const matrixSize = (await page.locator('.matrix').boundingBox())!;
   expect(matrixSize.height).toBeLessThan(430);
-  expect(matrixSize.width).toBeLessThan(1180);
+  expect(matrixSize.width).toBeLessThan(1320);
   await page.screenshot({ path: '../.tools/screenshots/phase1-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.matrix-scroll')).toBeVisible();
