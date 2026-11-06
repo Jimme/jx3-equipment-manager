@@ -205,7 +205,7 @@ function App() {
       </table></div>}
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} tab={inventoryTab} setTab={setInventoryTab}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.7</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.8</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
@@ -237,7 +237,7 @@ function EquipmentEditor({ data, editing, pending, run, close, lastEquipment, sa
     onSave={async (equipment, choices) => { await api(path, 'PUT', { expected_version: editing.cell.version, equipment, choices }); saved({ ...equipment, id: '', actual_grade: equipment.actual_grade! }); }}
     actions={editingExisting && <button type="button" className="danger" onClick={() => { if (window.confirm('清除此格当前装备？旧装备不进入仓库。')) void run(() => api(`${path}?expected_version=${editing.cell.version}`, 'DELETE'), '已清除穿戴', close); }}>清除穿戴</button>}/>;
   return <>
-    {(stock.length > 0 || editing.cell.equipment) && <div className="editor-modes"><button type="button" disabled={pending} className={mode === 'record' ? 'selected' : ''} onClick={() => setMode('record')}>{editing.cell.equipment ? '编辑当前记录' : '手动录入'}</button>{editing.cell.equipment && <button type="button" disabled={pending} className={mode === 'new' ? 'selected' : ''} onClick={() => setMode('new')}>手动换装</button>}{stock.length > 0 && <button type="button" disabled={pending} className={mode === 'warehouse' ? 'selected' : ''} onClick={() => setMode('warehouse')}>从仓库穿戴（{stock.length} 种）</button>}</div>}
+    {(stock.length > 0 || editing.cell.equipment) && <div className="menu-tabs"><button type="button" disabled={pending} aria-pressed={mode === 'record'} onClick={() => setMode('record')}>{editing.cell.equipment ? '编辑当前记录' : '手动录入'}</button>{editing.cell.equipment && <button type="button" disabled={pending} aria-pressed={mode === 'new'} onClick={() => setMode('new')}>手动换装</button>}{stock.length > 0 && <button type="button" disabled={pending} aria-pressed={mode === 'warehouse'} onClick={() => setMode('warehouse')}>从仓库穿戴（{stock.length} 种）</button>}</div>}
     {mode !== 'warehouse' ? form : <>
       {stock.length > 1 && <div className="warehouse-picker" role="radiogroup" aria-label="选择仓库装备">{stock.map(item => <label className={`warehouse-option ${item.id === selectedId ? 'selected' : ''}`} key={item.id}><input type="radio" name="warehouse-item" checked={selectedId === item.id} disabled={pending} onChange={() => { setSelectedId(item.id); setRequestId(newRequestId()); }}/><span><strong>{item.label} · {item.equipment.actual_grade} 品 · {item.quantity} 件</strong><small>{choiceSummary(item.choices, type === 'weapon')}</small></span></label>)}</div>}
       {selected && <WarehouseEquip key={selected.id} data={data} item={selected} requestId={requestId} initialCharacter={editing.character.id} initialSlot={editing.slot} fixedTarget targetInTitle run={run} pending={pending} close={close}/>}

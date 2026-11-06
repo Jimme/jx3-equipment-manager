@@ -42,12 +42,12 @@ export function GrowthEditor({ accountId, characterId, run, pending, onDirty }: 
     {dirty&&<p role="status" className="replacement-note">有未保存的养成输入。下方体质明细仍按已保存配置计算，保存后更新。</p>}
     <fieldset disabled={disabled}>
       <div className="config-scroll"><table className="daily-table growth-table"><thead><tr><th>部位 / 当前装备</th><th>精炼等级</th><th>五行石</th></tr></thead><tbody>{report.slots.map((row,index)=><tr key={row.slot}><th>{row.name}<small>{row.equipped?`${row.grade} 品 · ${row.cycle_name}`:'未装备'}</small></th><td><select aria-label={`${row.name}精炼`} value={draft.slots[index].refine} onChange={e=>editSlot(row.slot,'refine',e.target.value)}><option value="">未知</option>{[0,4,6,8].map(level=><option key={level} value={level}>{level}</option>)}</select></td><td><select aria-label={`${row.name}五行石`} value={draft.slots[index].stone} onChange={e=>editSlot(row.slot,'stone',e.target.value)}><option value="unknown">未知</option><option value="none">明确未镶嵌</option>{[1,2,3,4,5,6,7,8].map(level=><option key={level} value={level}>{level} 级</option>)}</select></td></tr>)}</tbody></table></div>
-      <details className="optional-fields"><summary>体质构成明细{report.missing.length?` · ${report.missing.length} 项未完善`:''}</summary>
+      <details className="optional-fields menu-disclosure"><summary>体质构成明细{report.missing.length?` · ${report.missing.length} 项未完善`:''}</summary>
         <p className="hint">未知不会当作 0；不适用不参与相加。装备来源合计不等于游戏面板完整体质。空部位会保守标为未完善，避免漏录被当成完整配置。</p>
         <div className="config-scroll"><table className="daily-table"><thead><tr><th>部位</th><th>基础</th><th>精炼</th><th>五行石</th><th>附魔</th><th>五彩石</th></tr></thead><tbody>{report.slots.map(row=><tr key={row.slot}><th>{row.name}</th>{(['base','refine','stone','enchant','rainbow'] as const).map(key=><td key={key} title={row.components[key].source}>{partText(row.components[key])}</td>)}</tr>)}</tbody></table></div>
         {!!report.missing.length&&<ul className="growth-missing">{report.missing.map(text=><li key={text}>{text}</li>)}</ul>}
       </details>
-      <details className="optional-fields"><summary>技能层数与计算口径</summary>
+      <details className="optional-fields menu-disclosure"><summary>技能层数与计算口径</summary>
         <p className="hint">当前阈值周期：{report.cycle?.name??'尚未选择'}。每层阈值表示达到该层所需的最低体质（含等于），需从 1 层起连续录入；当前配置最高层不代表游戏上限。</p>
         <label>装备以外的已确认体质修正<input aria-label="装备以外体质修正" type="number" min="0" max="2147483647" placeholder="未知留空，确认没有时填 0" value={draft.additional} onChange={e=>setDraft({...draft,additional:e.target.value,confirmed:false})}/></label>
         <label className="check"><input type="checkbox" aria-label="已核实计算口径与阈值" checked={draft.confirmed} disabled={!report.cycle||!draft.additional.trim()} onChange={e=>setDraft({...draft,confirmed:e.target.checked})}/>我已核实：装备合计加上述修正覆盖所需体质，当前周期技能阈值也符合上述规则。</label>

@@ -17,6 +17,9 @@ test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', a
   const dialog=page.getByRole('dialog');
   await expect(dialog.getByRole('heading',{name:'当前周期：数值验收旧周期'})).toBeVisible();
   await dialog.getByRole('button',{name:'数值配置',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'数值配置',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(dialog.getByText('导入 CSV',{exact:true})).toHaveCSS('font-size','13px');
+  await expect(dialog.getByRole('link',{name:'导出 CSV',exact:true})).toHaveCSS('font-size','13px');
   await dialog.getByLabel('添加真实品级').fill('1110');
   await dialog.getByRole('button',{name:'添加品级行',exact:true}).click();
   await dialog.getByLabel('1110品帽子基础体质').fill('149');

@@ -50,7 +50,7 @@ export function InventoryWorkspace({ data, run, pending, error, tab, setTab }: {
 
   return <section id="inventory" className="daily-section" aria-label="账号仓库与团本掉落">
     <div className="daily-heading">
-      <div className="daily-tabs" role="tablist" aria-label="仓库与备忘功能">{(Object.keys(titles) as InventoryTab[]).map(key => <button key={key} role="tab" aria-selected={tab === key} aria-controls="daily-panel" id={`tab-${key}`} disabled={pending} onClick={() => setTab(key)}>{titles[key]}</button>)}</div>
+      <div className="menu-tabs" role="tablist" aria-label="仓库与备忘功能">{(Object.keys(titles) as InventoryTab[]).map(key => <button key={key} role="tab" aria-selected={tab === key} aria-controls="daily-panel" id={`tab-${key}`} disabled={pending} onClick={() => setTab(key)}>{titles[key]}</button>)}</div>
       {(tab === 'warehouse' || tab === 'drops') && <div className="button-row"><button className="primary" disabled={pending || !data.cycleId} onClick={() => setDialog({ kind: 'add', target: tab, requestId: newRequestId() })}>{tab === 'warehouse' ? '添加库存' : '记录掉落'}</button>
             {tab === 'drops' && daily.drops.length > 0 && <button className="danger" disabled={pending} onClick={() => { if (window.confirm('清空本账号的本次掉落备忘？共享仓库和角色装备不会改变。')) void run(() => api(`${path}/drops/clear`, 'POST', { request_id: newRequestId(), expected_version: daily.drop_version }), '已清空掉落备忘，仓库未改变'); }}>清空本次掉落</button>}
       </div>}

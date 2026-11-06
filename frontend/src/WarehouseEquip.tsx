@@ -27,7 +27,7 @@ export function WarehouseEquip({ data, item, requestId, initialCharacter, initia
       当前：{cell.label}{cell.equipment && ` · ${cell.equipment.actual_grade} 品`} → {item.label} · {item.equipment.actual_grade} 品。
       {downgrade && <strong> 新装备比当前装备差。</strong>}确认后库存扣 1 件，旧装备不回库。
     </p>}
-    <details className="optional-fields"><summary>附魔{item.equipment.equipment_type === 'weapon' && '与五彩石'}</summary><ChoicesFields value={choices} onChange={setChoices} weapon={item.equipment.equipment_type === 'weapon'} cycleId={item.equipment.cycle_origin_id} equipmentType={item.equipment.equipment_type}/><p className="hint">修改只影响取出的 1 件。</p></details>
+    <details className="optional-fields menu-disclosure"><summary>附魔{item.equipment.equipment_type === 'weapon' && '与五彩石'}</summary><ChoicesFields value={choices} onChange={setChoices} weapon={item.equipment.equipment_type === 'weapon'} cycleId={item.equipment.cycle_origin_id} equipmentType={item.equipment.equipment_type}/><p className="hint">修改只影响取出的 1 件。</p></details>
     <p className="hint" aria-live="polite" data-testid="equip-choice-summary">{draftChoiceSummary(choices, item.equipment.equipment_type === 'weapon')}</p>
     <div className="dialog-actions"><button type="button" onClick={close}>取消</button><button className="primary" disabled={!cell}>{downgrade ? '确认换成较低配置' : '确认穿戴'}</button></div>
   </fieldset></form>;

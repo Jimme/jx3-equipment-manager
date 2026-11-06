@@ -33,7 +33,7 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
     <h3>{preview.kind==='import'?'JSON 导入预览':'数据库恢复预览'}</h3><p className="hint">文件：{filename}</p>
     <p className="replacement-note">整体替换当前工作空间，不合并。账号、角色、装备、库存、掉落和周期配置均以文件为准。确认前会自动备份当前数据；校验或保存失败不会部分替换。</p>
     <div className="config-scroll"><table className="daily-table"><thead><tr><th>内容</th><th>当前</th><th>替换后</th></tr></thead><tbody>{Object.keys(preview.before).map(key=><tr key={key}><th>{key}</th><td>{preview.before[key]}</td><td>{preview.after[key]}</td></tr>)}</tbody></table></div>
-    <details className="optional-fields"><summary>查看名称与记录变化</summary>{Object.entries(preview.names).map(([label,names])=><p className="hint" key={label}>{label}（各最多 20 项）：{names.before.join('、')||'无'} → {names.after.join('、')||'无'}</p>)}<div className="config-scroll"><table className="daily-table"><thead><tr><th>内容</th><th>新增</th><th>修改</th><th>删除</th></tr></thead><tbody>{preview.changes.map(change=><tr key={change.label}><th>{change.label}</th><td>{change.added}</td><td>{change.changed}</td><td>{change.deleted}</td></tr>)}</tbody></table></div></details>
+    <details className="optional-fields menu-disclosure"><summary>查看名称与记录变化</summary>{Object.entries(preview.names).map(([label,names])=><p className="hint" key={label}>{label}（各最多 20 项）：{names.before.join('、')||'无'} → {names.after.join('、')||'无'}</p>)}<div className="config-scroll"><table className="daily-table"><thead><tr><th>内容</th><th>新增</th><th>修改</th><th>删除</th></tr></thead><tbody>{preview.changes.map(change=><tr key={change.label}><th>{change.label}</th><td>{change.added}</td><td>{change.changed}</td><td>{change.deleted}</td></tr>)}</tbody></table></div></details>
     {preview.unchanged?<p className="hint">文件内容与当前数据相同，无需替换。</p>:<label className="check"><input type="checkbox" aria-label="确认整体替换工作空间" checked={confirmed} disabled={pending} onChange={e=>setConfirmed(e.target.checked)}/>我确认使用这份文件整体替换当前工作空间。</label>}
     <div className="dialog-actions"><button disabled={pending} onClick={()=>{setPreview(null);setConfirmed(false);}}>返回</button><button className="primary" disabled={pending||!confirmed||preview.unchanged} onClick={()=>void run(async()=>{
       await api<{backup:string|null}>(`/data/changes/${preview.preview_id}/apply`,'POST',{confirm_replace:true});
@@ -61,14 +61,14 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
         },'文件校验通过，请核对替换预览',undefined,false);
       }}/></label>
     </div></fieldset>
-    <details className="optional-fields"><summary>导入与恢复说明</summary><p className="hint">JSON 用于完整迁移。32 MB 以内的兼容数据库备份可在线恢复，其他备份可按 README 停机恢复。替换数据前会自动备份当前数据库。</p></details>
+    <details className="optional-fields menu-disclosure"><summary>导入与恢复说明</summary><p className="hint">JSON 用于完整迁移。32 MB 以内的兼容数据库备份可在线恢复，其他备份可按 README 停机恢复。替换数据前会自动备份当前数据库。</p></details>
     <section aria-label="已有数据库备份">
       <div className="backup-heading"><h3>已有数据库备份 · {backups.length} 份</h3><button className="quiet-button" disabled={pending} onClick={()=>void run(readBackups,'',undefined,false)}>刷新备份列表</button></div>
       {listError ? <p role="alert">{listError}</p> : !backups.length && <p className="hint">暂无备份</p>}
       <div className="backup-list">{backups.slice(0,visible).map(backup=>{
         const path = `/data/backups/${encodeURIComponent(backup.name)}`;
         return <div className="backup-row" role="group" aria-label={backup.name} key={backup.name}>
-          <div><strong>{backup.name}</strong><small>{new Date(backup.created_at).toLocaleString()} · {(backup.size/1024).toFixed(0)} KB</small></div>
+          <div><strong>{backup.name}</strong><small>{new Date(backup.created_at).toLocaleString('zh-CN')} · {(backup.size/1024).toFixed(0)} KB</small></div>
           <div className="button-row">
             <button disabled={pending} onClick={()=>void run(()=>download(`/api${path}`,backup.name),'备份已下载',undefined,false)}>下载</button>
             <button disabled={pending} onClick={()=>void run(async()=>install(await api<DataPreview>(`${path}/restore-preview`,'POST'),backup.name),'',undefined,false)}>预览恢复</button>

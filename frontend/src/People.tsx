@@ -44,7 +44,7 @@ export function People({ data, run, selectAccount, onDirty, addCharacter }: { da
   return <>
     <div className="people-heading"><h3>游戏账号</h3><button onClick={() => edit('account', null)}>＋ 添加账号</button></div>
     <div className="entity-list">{accounts.map(accountRow)}</div>
-    {archivedAccounts.length > 0 && <details><summary>已归档账号（{archivedAccounts.length}）</summary><div className="entity-list">{archivedAccounts.map(accountRow)}</div></details>}
+    {archivedAccounts.length > 0 && <details className="menu-disclosure"><summary>已归档账号（{archivedAccounts.length}）</summary><div className="entity-list">{archivedAccounts.map(accountRow)}</div></details>}
     <div className="people-heading">
       <h3>当前账号角色{data.matrix && ` · ${data.matrix.account.name}`}</h3>
       {accounts.length > 1 && <label>切换<select aria-label="管理账号" value={data.accountId} onChange={e => void switchAccount(e.target.value)}>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
@@ -52,7 +52,7 @@ export function People({ data, run, selectAccount, onDirty, addCharacter }: { da
     </div>
     {characters.length === 0 && data.accountId && <p className="small-empty">这个账号还没有角色</p>}
     <div className="entity-list">{characters.map(characterRow)}</div>
-    {removed.length > 0 && <details><summary>已移除角色（{removed.length}）</summary><p className="hint">装备和养成记录已保留，恢复后重新显示在装备表。</p><div className="entity-list">{removed.map(characterRow)}</div></details>}
+    {removed.length > 0 && <details className="menu-disclosure"><summary>已移除角色（{removed.length}）</summary><p className="hint">装备和养成记录已保留，恢复后重新显示在装备表。</p><div className="entity-list">{removed.map(characterRow)}</div></details>}
     {formOpen && <form className="subform" onSubmit={e => { e.preventDefault(); void run(async () => {
       const path = kind === 'account' ? '/accounts' : `/accounts/${data.accountId}/characters`;
       const saved = await api<Account | Character>(entity ? `${path}/${entity.id}` : path, entity ? 'PUT' : 'POST', { name, sort_order: optionalInteger(sort) ?? 0, archived: entity?.archived ?? false });
@@ -61,7 +61,7 @@ export function People({ data, run, selectAccount, onDirty, addCharacter }: { da
     }); }}>
       <h3>{entity ? '编辑' : '添加'}{kind === 'account' ? '账号' : `角色 · ${data.matrix?.account.name ?? ''}`}</h3>
       <label>名称<input ref={nameInput} aria-label="管理名称" required maxLength={100} value={name} onChange={e => setName(e.target.value)}/></label>
-      <details className="optional-fields"><summary>调整显示顺序</summary><label>排序数字（小的排在前面）<input aria-label="排序" type="number" required min="0" max="100000" value={sort} onChange={e => setSort(e.target.value)}/></label></details>
+      <details className="optional-fields menu-disclosure"><summary>调整显示顺序</summary><label>排序数字（小的排在前面）<input aria-label="排序" type="number" required min="0" max="100000" value={sort} onChange={e => setSort(e.target.value)}/></label></details>
       <div className="dialog-actions"><button type="button" onClick={() => { if (discard()) setFormOpen(false); }}>取消</button><button className="primary" disabled={kind === 'character' && !data.accountId}>保存{kind === 'account' ? '账号' : '角色'}</button></div>
     </form>}
   </>;

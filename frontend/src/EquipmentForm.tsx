@@ -86,7 +86,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
       {leadingFields}
       {allowCopy && (templates.length > 0 || canCopyLast) && <div className="equipment-copy">
         {canCopyLast && <button type="button" onClick={() => copyEquipment(lastEquipment)}>复制上一条</button>}
-        {templates.length > 0 && <details><summary>复制已有装备</summary>
+        {templates.length > 0 && <details className="menu-disclosure"><summary>复制已有装备</summary>
           <label>从已有装备复制<select aria-label="从已有模板复制" value="" onChange={e => { const template = templates.find(t => t.id === e.target.value); if (template) copyEquipment(template); }}>
             <option value="">选择此部位的装备…</option>
             {templates.map(t => <option key={t.id} value={t.id}>{t.name || t.source_name} · {t.actual_grade} 品 · {t.has_constitution_socket ? '有孔' : '无孔'} / {t.green_stats_ok ? '绿字达标' : '绿字未达标'}</option>)}
@@ -108,7 +108,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
         <BinaryChoice title="绿字是否达标" value={fields.green_stats_ok} yes="达标" no="未达标" hint="内防＋外防＋加速" onChange={value => setFields({ ...fields, green_stats_ok: value })}/>
       </div>
       {sourceError && <p role="alert" className="message error">来源加载失败：{sourceError}</p>}
-      <details className="optional-fields" onToggle={e => setDetailsOpen(e.currentTarget.open)}><summary>更多信息</summary>
+      <details className="optional-fields menu-disclosure" onToggle={e => setDetailsOpen(e.currentTarget.open)}><summary>更多信息</summary>
         <h3>{type === 'weapon' ? '附魔与五彩石' : '附魔'}</h3><ChoicesFields value={choices} onChange={setChoices} weapon={type === 'weapon'} cycleId={fields.cycle_origin_id} equipmentType={type}/>
         <div className="form-grid">
           <label>装备名称（可空）<input aria-label="装备名称" maxLength={100} value={fields.name} onChange={e => setFields({ ...fields, name: e.target.value })}/></label>

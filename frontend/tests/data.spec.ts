@@ -11,6 +11,22 @@ test('数据维护：下载、无效文件、预览取消、冲突保护、JSON 
   await page.getByLabel('游戏账号',{exact:true}).selectOption(account.id);
   await page.getByRole('button',{name:'数据与备份',exact:true}).click();
   const dialog=page.getByRole('dialog');
+  const actions=dialog.locator('.button-row').first().locator(':scope > :is(button,.file-button)');
+  await expect(actions).toHaveCount(3);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({width,height:844});
+    const styles=await actions.evaluateAll(elements=>elements.map(element=>{
+      const {fontSize,fontWeight,lineHeight,borderRadius}=getComputedStyle(element);
+      return {fontSize,fontWeight,lineHeight,borderRadius,height:element.getBoundingClientRect().height};
+    }));
+    expect(styles[0]).toEqual(styles[1]);
+    expect(styles[0]).toEqual(styles[2]);
+    const tops=await actions.evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect().top));
+    expect(new Set(tops).size).toBe(1);
+    expect(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+    await dialog.screenshot({path:`../.tools/screenshots/menu-backup-${width}.png`});
+  }
+  await page.setViewportSize({width:1280,height:844});
   let download=page.waitForEvent('download');
   await dialog.getByRole('button',{name:'导出 JSON',exact:true}).click();
   const jsonFile=await download;
