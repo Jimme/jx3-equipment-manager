@@ -178,6 +178,20 @@ def test_backup_download_upload_restore_and_pre_restore_backup(client,setup):
     assert client.post('/api/data/backups/'+backup+'/restore-preview').status_code==200
 
 
+def test_delete_backup_only_removes_selected_snapshot(client, setup, tmp_path):
+    names = [client.post('/api/data/backups').json()['name'] for _ in range(2)]
+    workspace = client.get('/api/workspace').json()
+    assert client.delete('/api/data/backups/%2e%2e%5capp.sqlite3').status_code == 404
+    path = f'/api/data/backups/{names[0]}'
+    assert client.delete(path).json() == {'name': names[0]}
+    assert client.delete(path).status_code == 404
+    assert client.get(path).status_code == 404
+    assert client.post(path + '/restore-preview').status_code == 404
+    assert [item['name'] for item in client.get('/api/data/backups').json()] == [names[1]]
+    assert client.get('/api/workspace').json() == workspace
+    assert (tmp_path / 'app.sqlite3').is_file()
+
+
 def test_old_and_malformed_sqlite_backups_rejected(client,setup,tmp_path):
     for raw in [b'',b'not sqlite',b'SQLite format 3\x00' + b'bad data']:
         assert client.post('/api/data/restore-preview',content=raw).status_code==422

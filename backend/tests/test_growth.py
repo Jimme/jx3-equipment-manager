@@ -2,7 +2,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 
 from .conftest import equipment_payload, equipment_url
@@ -17,6 +17,32 @@ def report(client, setup):
     response = client.get(path(setup))
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def test_matrix_queries_do_not_grow_per_character(client, setup):
+    account = f"/api/accounts/{setup['account']['id']}"
+    queries = []
+
+    def count_select(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            queries.append(statement)
+
+    def load_matrix(expected_characters):
+        queries.clear()
+        engine = client.app.state.engine
+        event.listen(engine, 'before_cursor_execute', count_select)
+        try:
+            response = client.get(account + '/matrix')
+        finally:
+            event.remove(engine, 'before_cursor_execute', count_select)
+        assert response.status_code == 200
+        assert len(response.json()['growth']) == expected_characters
+        return len(queries)
+
+    single = load_matrix(1)
+    for index in range(5):
+        assert client.post(account + '/characters', json={'name': f'查询测试角色{index}'}).status_code == 201
+    assert load_matrix(6) == single
 
 
 def body_for(data):

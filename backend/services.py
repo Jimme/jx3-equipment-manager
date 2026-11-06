@@ -4,11 +4,17 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 
 from .domain import SLOT_KEYS, equipment_type
 from .models import Account, AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, Source, Template, WornEquipment
 from .schemas import EquipmentChoices, TemplateInput
+
+BASE_STAT_MATCH = and_(
+    CycleBaseStat.cycle_id == Template.cycle_origin_id,
+    CycleBaseStat.actual_grade == Template.actual_grade,
+    CycleBaseStat.equipment_type == Template.equipment_type,
+)
 
 
 def new_id():
@@ -68,12 +74,18 @@ def choices_for(config):
 
 
 def template_view(session, template):
-    if template.base_constitution_override is not None:
-        stat = {'value': template.base_constitution_override, 'status': 'known', 'source': 'override'}
-    else:
+    value = None
+    if template.base_constitution_override is None:
         row = session.get(CycleBaseStat, (template.cycle_origin_id, template.actual_grade, template.equipment_type))
         value = row.constitution if row else None
-        stat = {'value': value, 'status': 'unknown' if value is None else 'known', 'source': 'cycle'}
+    return template_snapshot(template, value)
+
+
+def template_snapshot(template, default_constitution):
+    override = template.base_constitution_override
+    value = default_constitution if override is None else override
+    stat = {'value': value, 'status': 'unknown' if value is None else 'known',
+            'source': 'cycle' if override is None else 'override'}
     return {**dump(template), 'base_stat': stat}
 
 

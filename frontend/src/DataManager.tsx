@@ -19,7 +19,14 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
   const [confirmed,setConfirmed]=useState(false);
   const [visible,setVisible]=useState(20);
   const [filename,setFilename]=useState('');
-  async function readBackups() {try {setBackups(await api<BackupFile[]>('/data/backups'));setListError('');} catch(e) {setListError(e instanceof Error?e.message:'备份列表读取失败');}}
+  async function readBackups() {
+    try {
+      setBackups(await api<BackupFile[]>('/data/backups'));
+      setListError('');
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : '备份列表读取失败');
+    }
+  }
   useEffect(()=>{void readBackups();},[]);
   function install(value: DataPreview, name: string) {setPreview(value);setConfirmed(false);setFilename(name);}
   if(preview) return <section aria-label="工作空间替换预览">
@@ -34,7 +41,6 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
     },'工作空间已替换，原数据已自动备份',close)}>确认替换并备份</button></div>
   </section>;
   return <section aria-label="数据与备份">
-    <p className="hint">JSON 用于完整导出与迁移；数据库备份用于恢复。文件包含当前工作空间的数据，不包含程序或历史备份文件。正式录入后，建议下载到其他设备留一份。</p>
     <fieldset disabled={pending}><div className="button-row">
       <button onClick={()=>void run(()=>download('/api/data/export','jx3-workspace.json'),'JSON 已导出',undefined,false)}>导出 JSON</button>
       <button onClick={()=>void run(async()=>{
@@ -55,12 +61,28 @@ export function DataManager({ run, pending, close, replaced }: { run: Run; pendi
         },'文件校验通过，请核对替换预览',undefined,false);
       }}/></label>
     </div></fieldset>
-    <p className="hint">导入和恢复先校验、再预览。32 MB 以内的兼容备份可在线恢复。更早或更大的备份可按 README 停机恢复。</p>
-    <details className="optional-fields"><summary>已有数据库备份 · {backups.length} 份</summary>
-      {listError&&<p role="alert">{listError}</p>}<button disabled={pending} onClick={()=>void run(readBackups,'备份列表已刷新',undefined,false)}>刷新备份列表</button>
-      {!backups.length&&<p className="hint">还没有数据库备份。点击上方“备份并下载数据库”创建。</p>}
-      <div className="backup-list">{backups.slice(0,visible).map(backup=><div className="backup-row" role="group" aria-label={backup.name} key={backup.name}><div><strong>{backup.name}</strong><small>{new Date(backup.created_at).toLocaleString()} · {(backup.size/1024).toFixed(0)} KB</small></div><div className="button-row"><button disabled={pending} onClick={()=>void run(()=>download(`/api/data/backups/${backup.name}`,backup.name),'备份已下载',undefined,false)}>下载</button><button disabled={pending} onClick={()=>void run(async()=>install(await api<DataPreview>(`/data/backups/${backup.name}/restore-preview`,'POST'),backup.name),'已生成恢复预览',undefined,false)}>预览恢复</button></div></div>)}</div>
+    <details className="optional-fields"><summary>导入与恢复说明</summary><p className="hint">JSON 用于完整迁移。32 MB 以内的兼容数据库备份可在线恢复，其他备份可按 README 停机恢复。替换数据前会自动备份当前数据库。</p></details>
+    <section aria-label="已有数据库备份">
+      <div className="backup-heading"><h3>已有数据库备份 · {backups.length} 份</h3><button className="quiet-button" disabled={pending} onClick={()=>void run(readBackups,'',undefined,false)}>刷新备份列表</button></div>
+      {listError ? <p role="alert">{listError}</p> : !backups.length && <p className="hint">暂无备份</p>}
+      <div className="backup-list">{backups.slice(0,visible).map(backup=>{
+        const path = `/data/backups/${encodeURIComponent(backup.name)}`;
+        return <div className="backup-row" role="group" aria-label={backup.name} key={backup.name}>
+          <div><strong>{backup.name}</strong><small>{new Date(backup.created_at).toLocaleString()} · {(backup.size/1024).toFixed(0)} KB</small></div>
+          <div className="button-row">
+            <button disabled={pending} onClick={()=>void run(()=>download(`/api${path}`,backup.name),'备份已下载',undefined,false)}>下载</button>
+            <button disabled={pending} onClick={()=>void run(async()=>install(await api<DataPreview>(`${path}/restore-preview`,'POST'),backup.name),'',undefined,false)}>预览恢复</button>
+            <button className="danger" disabled={pending} onClick={()=>{
+              if (!window.confirm(`永久删除服务器上的备份「${backup.name}」？当前工作空间和已下载的副本不受影响。`)) return;
+              void run(async()=>{
+                await api(path,'DELETE');
+                setBackups(current=>current.filter(file=>file.name!==backup.name));
+              },'已删除备份',undefined,false);
+            }}>删除备份</button>
+          </div>
+        </div>;
+      })}</div>
       {backups.length>visible&&<button disabled={pending} onClick={()=>setVisible(visible+20)}>显示更多备份</button>}
-    </details>
+    </section>
   </section>;
 }

@@ -1,11 +1,11 @@
 import { requestId as newRequestId } from './requestId';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, optionalInteger } from './api';
-import type { Cell, Character, DailyData, Data, Matrix, RaidDifficulty, Run, Source, Template, Workspace } from './types';
+import type { Cell, Character, DailyData, Data, InventoryItem, Matrix, RaidDifficulty, Run, Source, Template, Workspace } from './types';
 import { Modal } from './Modal';
 import { EquipmentForm } from './EquipmentForm';
-import { InventoryWorkspace } from './InventoryWorkspace';
+import { InventoryWorkspace, type InventoryTab } from './InventoryWorkspace';
 import { WarehouseEquip } from './WarehouseEquip';
 import { choiceSummary } from './ChoicesFields';
 import { DataManager } from './DataManager';
@@ -15,8 +15,20 @@ import { People } from './People';
 import './style.css';
 
 type Editing = { character: Character; slot: string; slotName: string; cell: Cell };
-type Panel = 'people' | 'sources' | 'data' | null;
+type Panel = 'people' | 'add-character' | 'sources' | 'data' | null;
 const raidChecks = [['10', '10人'], ['25pt', '25pt'], ['25yx', '25yx']] as const;
+const stockColumns = [['warehouse', '共享仓库'], ['drops', '团本掉落']] as const;
+
+function indexStock(items: InventoryItem[] = []) {
+  const byType = new Map<string, InventoryItem[]>();
+  for (const item of items) {
+    const type = item.equipment.equipment_type;
+    const group = byType.get(type);
+    if (group) group.push(item);
+    else byType.set(type, [item]);
+  }
+  return byType;
+}
 
 function rememberedAccount(): string {
   try { return window.localStorage.getItem('jx3-selected-account') ?? ''; } catch { return ''; }
@@ -33,22 +45,24 @@ function App() {
   const [growthCharacter, setGrowthCharacter] = useState<Character | null>(null);
   const [growthDirty, setGrowthDirty] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [target, setTarget] = useState('');
+  const [targetDraft, setTargetDraft] = useState<{ accountId: string; value: string } | null>(null);
   const [lastEquipment, setLastEquipment] = useState<Template | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
+  const [inventoryTab, setInventoryTab] = useState<InventoryTab>('warehouse');
+  const warehouse = useMemo(() => indexStock(data?.daily?.warehouse), [data?.daily?.warehouse]);
+  const drops = useMemo(() => indexStock(data?.daily?.drops), [data?.daily?.drops]);
   const loadVersion = useRef(0);
   const pendingRef = useRef(false);
   const selectedAccount = useRef('');
 
-  async function load(accountId?: string, cycleId?: string) {
+  async function load(accountId?: string) {
     const version = ++loadVersion.current;
     const workspace = await api<Workspace>('/workspace');
     const preferredAccount = accountId || selectedAccount.current || rememberedAccount();
     const activeAccount = workspace.accounts.find(a => a.id === preferredAccount && !a.archived) ?? workspace.accounts.find(a => !a.archived);
-    const selectedCycle = workspace.cycles.find(c => c.id === cycleId)?.id ?? workspace.active_cycle_id ?? '';
-    const [matrix, characters, sources, templates, daily] = await Promise.all([
-      activeAccount ? api<Matrix>(`/accounts/${activeAccount.id}/matrix`) : Promise.resolve(null),
-      activeAccount ? api<Character[]>(`/accounts/${activeAccount.id}/characters`) : Promise.resolve([]),
+    const selectedCycle = workspace.active_cycle_id ?? '';
+    const [matrix, sources, templates, daily] = await Promise.all([
+      activeAccount ? api<Matrix & { all_characters: Character[] }>(`/accounts/${activeAccount.id}/matrix?include_archived=true`) : Promise.resolve(null),
       selectedCycle ? api<Source[]>(`/cycles/${selectedCycle}/sources`) : Promise.resolve([]),
       api<Template[]>('/templates'),
       activeAccount ? api<DailyData>(`/accounts/${activeAccount.id}/daily`) : Promise.resolve(null),
@@ -56,8 +70,8 @@ function App() {
     if (version !== loadVersion.current) return;
     selectedAccount.current = activeAccount?.id ?? '';
     try { window.localStorage.setItem('jx3-selected-account', selectedAccount.current); } catch { /* Storage-disabled browsers still work without remembered selection. */ }
-    setData({ workspace, matrix, characters, sources, templates, daily, accountId: activeAccount?.id ?? '', cycleId: selectedCycle });
-    setTarget(activeAccount?.target_grade?.toString() ?? '');
+    setData({ workspace, matrix, characters: matrix?.all_characters ?? [], sources, templates, daily, accountId: activeAccount?.id ?? '', cycleId: selectedCycle });
+    setTargetDraft(draft => draft?.accountId === activeAccount?.id ? draft : null);
   }
 
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
@@ -88,13 +102,18 @@ function App() {
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : '操作失败，请重试';
+      if (completed && reload) {
+        pendingRef.current = false;
+        close?.();
+      }
       setError(completed && reload ? `操作已提交，但页面刷新失败，请刷新核对：${message}` : message);
       return false;
     } finally { pendingRef.current = false; setPending(false); }
   };
 
-  const refresh = () => run(() => load(data?.accountId, data?.cycleId), '已刷新', undefined, false);
-  const closePanel = () => { if (pendingRef.current) return; if (panel === 'people' && peopleDirty && !window.confirm('账号或角色名称还没保存，关闭会丢弃。确定关闭？')) return; if (panel === 'sources' && cycleDirty && !window.confirm('有未保存的输入，关闭会丢弃。确定关闭？')) return; setPanel(null); setError(''); setCycleDirty(false); setPeopleDirty(false); };
+  const refresh = () => run(() => load(data?.accountId), '已刷新', undefined, false);
+  const peoplePanel = panel === 'people' || panel === 'add-character';
+  const closePanel = () => { if (pendingRef.current) return; if (peoplePanel && peopleDirty && !window.confirm('账号或角色名称还没保存，关闭会丢弃。确定关闭？')) return; if (panel === 'sources' && cycleDirty && !window.confirm('有未保存的输入，关闭会丢弃。确定关闭？')) return; setPanel(null); setError(''); setCycleDirty(false); setPeopleDirty(false); };
   const closeGrowth = () => { if (pendingRef.current) return; if (growthDirty && !window.confirm('养成输入还没保存，关闭会丢弃。确定关闭？')) return; setGrowthCharacter(null); setGrowthDirty(false); setError(''); };
   const closeEquipment = () => { if (!pendingRef.current) { setEditing(null); setError(''); } };
 
@@ -118,63 +137,79 @@ function App() {
   if (!data) return <main className="loading"><h1>剑网三 · 坦克装备簿</h1>{error ? <><p role="alert">{error}</p><button onClick={() => { setError(''); void refresh(); }}>重试连接</button></> : <p>正在打开装备簿…</p>}</main>;
   const { workspace, matrix, accountId, cycleId } = data;
   const account = matrix?.account;
+  const target = targetDraft?.accountId === accountId ? targetDraft.value : account?.target_grade?.toString() ?? '';
   const grades = [...new Set([...data.sources.map(s => s.default_grade), ...data.templates.map(t => t.actual_grade)].filter((v): v is number => v !== null))].sort((a, b) => a - b);
+  const stock = { warehouse, drops };
+  const visibleStock = stockColumns.filter(([key]) => stock[key].size > 0);
+  const comparisonHelp = account?.target_grade == null ? '未设目标，暂不比较' : account.comparison_mode === 'grade' ? '仅比较真实品级' : '高于目标即达标；同品级需同时有体质孔和达标绿字';
 
   return <main>
     <header className="masthead">
-      <div><div className="eyebrow">JX3 EQUIPMENT JOURNAL <span>本地工作空间</span></div><h1>坦克装备簿<span className="seal">装备</span></h1><p>逐格记录，按真实品级看清每一件装备。</p></div>
+      <div className="app-heading"><h1>坦克装备簿</h1>{notice && !panel && <span role="status" className="app-notice">{notice}</span>}</div>
       <div className="header-actions"><button onClick={refresh} disabled={pending}>刷新</button><button onClick={()=>{setError('');setPanel('data');}}>数据与备份</button><button onClick={() => setPanel('sources')}>周期与来源</button><button className="primary" onClick={() => setPanel('people')}>账号与角色</button></div>
     </header>
     {error && !panel && !editing && <div role="alert" className="message error">{error}</div>}
-    {notice && <div role="status" className="message success">{notice}</div>}
     <section className="toolbar" aria-label="装备比较设置">
-      <label>游戏账号<select aria-label="游戏账号" value={accountId} disabled={pending} onChange={e => { const id = e.target.value; void run(() => load(id, cycleId), '已切换账号', undefined, false); }}>
+      <label>账号<select aria-label="游戏账号" value={accountId} disabled={pending} onChange={e => { const id = e.target.value; void run(() => load(id), '', undefined, false); }}>
         {!accountId && <option value="">请添加账号</option>}{workspace.accounts.filter(a => !a.archived).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
       </select></label>
-      <label>装备周期<select aria-label="装备周期" value={cycleId} disabled={pending} onChange={e => { const id = e.target.value; void run(async () => { await api('/workspace/active-cycle', 'PUT', { cycle_id: id }); await load(accountId, id); }, '已切换周期', undefined, false); }}>
+      <label>周期<select aria-label="装备周期" value={cycleId} disabled={pending} onChange={e => { const id = e.target.value; void run(() => api('/workspace/active-cycle', 'PUT', { cycle_id: id }), '已切换周期'); }}>
         {!cycleId && <option value="">请创建周期</option>}{workspace.cycles.filter(c => !c.archived).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select></label>
-      <form className="target-form" onSubmit={e => { e.preventDefault(); if (account) void run(() => api(`/accounts/${accountId}/preferences`, 'PUT', { target_grade: optionalInteger(target), comparison_mode: account.comparison_mode }), '已更新目标'); }}>
-        <label>目标真实品级<input aria-label="目标真实品级" type="number" min="1" max="2147483647" step="1" list="configured-grades" placeholder="未设置" value={target} onChange={e => setTarget(e.target.value)} disabled={!account || pending}/></label>
-        <datalist id="configured-grades">{grades.map(g => <option key={g} value={g}/>)}</datalist><button disabled={!account || pending}>应用</button>
+      <form className="target-form" onSubmit={e => { e.preventDefault(); if (account) void run(async () => {
+        await api(`/accounts/${accountId}/preferences`, 'PATCH', { target_grade: optionalInteger(target) });
+        setTargetDraft(null);
+      }, '已更新目标'); }}>
+        <label>目标品级<input aria-label="目标真实品级" type="number" min="1" max="2147483647" step="1" list="configured-grades" placeholder="未设置" value={target} onChange={e => setTargetDraft({ accountId, value: e.target.value })} disabled={!account || pending}/></label>
+        <datalist id="configured-grades">{grades.map(g => <option key={g} value={g}/>)}</datalist><button disabled={!account || pending || target === (account.target_grade?.toString() ?? '')}>应用</button>
       </form>
-      <label>比较模式<select aria-label="比较模式" value={account?.comparison_mode ?? 'strict'} disabled={!account || pending} onChange={e => { const mode = e.target.value; void run(() => api(`/accounts/${accountId}/preferences`, 'PUT', { target_grade: account?.target_grade, comparison_mode: mode }), '已切换比较模式'); }}><option value="strict">严格达标</option><option value="grade">仅品级</option><option value="combined">综合达标</option></select></label>
+      <label>比较模式<select aria-label="比较模式" value={account?.comparison_mode ?? 'strict'} disabled={!account || pending} onChange={e => { const mode = e.target.value; void run(() => api(`/accounts/${accountId}/preferences`, 'PATCH', { comparison_mode: mode }), ''); }}><option value="strict">严格达标</option><option value="grade">仅品级</option><option value="combined">综合达标</option></select></label>
     </section>
-    {!account ? <section className="empty"><span className="empty-mark">册</span><h2>从第一个游戏账号开始</h2><p>添加账号和角色，即可建立你的 12 部位装备表。体质数据可以以后再补。</p><button className="primary" onClick={() => setPanel('people')}>添加账号与角色</button></section> : <section className="matrix-section">
-      <div className="section-heading"><div><h2>{account.name}<span>装备矩阵</span></h2><p>点击格子录入或更换装备；切换周期不改写旧装备。</p></div><label className="check"><input type="checkbox" checked={gapsOnly} onChange={e => setGapsOnly(e.target.checked)}/>只强调未达标</label></div>
-      <div className="legend">{account.comparison_mode === 'combined' ? <><span><i className="dot complete-dot"/>完全达标 · 白底</span><span><i className="dot gap-dot"/>仅品级达标 · 淡黄</span><span><i className="dot insufficient-dot"/>品级不足 / 未装备 · 淡红</span></> : <><span><i className="dot gap-dot"/>未达标 / 未装备</span><span><i className="dot met-dot"/>已达标 · 弱化显示</span></>}<span>标签：无体质孔加「-」，绿字达标加「+」</span></div>
-      {matrix!.characters.length === 0 ? <div className="empty"><h2>这个账号还没有角色</h2><p>添加角色后，装备部位会按固定顺序自动展开。</p><button onClick={() => setPanel('people')}>添加角色</button></div> : <div className="matrix-scroll" tabIndex={0} aria-label="可横向滚动的装备矩阵"><table className={`matrix mode-${account.comparison_mode} ${gapsOnly ? 'focus-gaps' : ''}`}>
+    {!account ? <section className="empty"><h2>从第一个游戏账号开始</h2><p>添加账号和角色，即可建立你的 12 部位装备表。体质数据可以以后再补。</p><button className="primary" onClick={() => setPanel('people')}>添加账号与角色</button></section> : <section className="matrix-section">
+      <div className="section-heading"><h2>{account.name}<span>装备矩阵</span></h2>
+        <div className="legend">{account.target_grade === null ? <span>{comparisonHelp}</span> : <>{account.comparison_mode === 'combined' ? <><span><i className="dot complete-dot"/>完全达标</span><span><i className="dot gap-dot"/>仅品级达标</span><span><i className="dot insufficient-dot"/>品级不足／空缺</span></> : <><span><i className="dot gap-dot"/>未达标／空缺</span><span><i className="dot met-dot"/>已达标</span></>}<details className="matrix-help"><summary>规则</summary><p>{comparisonHelp}。无体质孔加「-」，绿字达标加「+」。</p></details></>}</div>
+        <label className="check"><input type="checkbox" checked={gapsOnly} onChange={e => setGapsOnly(e.target.checked)}/>弱化达标</label>
+      </div>
+      {matrix!.characters.length === 0 ? <div className="empty"><h2>这个账号还没有角色</h2><button onClick={() => setPanel('add-character')}>添加角色</button></div> : <div className="matrix-scroll" tabIndex={0} aria-label="可横向滚动的装备矩阵"><table className={`matrix mode-${account.comparison_mode} ${gapsOnly ? 'focus-gaps' : ''}`}>
         <thead><tr><th scope="col">装备部位</th>{matrix!.characters.map(c => <th scope="col" key={c.id}>
           <div className="character-heading">
-            <strong>{c.name}</strong>
+            <button className="growth-entry" title="养成与体质" disabled={pending} onClick={() => { setError(''); setGrowthCharacter(c); }} aria-label={`${c.name} 养成与体质`}>{c.name}</button>
             <fieldset className="raid-checks" disabled={pending} aria-label={`${c.name} 副本完成记录`}>
               {raidChecks.map(([difficulty, label]) => <label className="check" key={difficulty}>
                 <input type="checkbox" checked={c[`raid_${difficulty}`]} onChange={event => setRaidCheck(c, difficulty, event.target.checked)}/>{label}
               </label>)}
             </fieldset>
           </div>
-          <div className="character-growth">
-            <small>{matrix!.growth[c.id]?.equipment_total === null ? `已知体质 ${matrix!.growth[c.id]?.known_subtotal ?? 0} · 待完善` : `装备体质 ${matrix!.growth[c.id]?.equipment_total}`}</small>
-            <button className="growth-entry" disabled={pending} onClick={() => { setError(''); setGrowthCharacter(c); }} aria-label={`${c.name} 养成与体质`}>养成与体质</button>
-          </div>
-        </th>)}</tr></thead>
-        <tbody>{workspace.slots.map((slot, index) => <tr key={slot.key}><th scope="row"><span className="row-number">{String(index + 1).padStart(2, '0')}</span>{slot.name}</th>{matrix!.characters.map(c => {
+          <small>{matrix!.growth[c.id]?.equipment_total == null ? '体质待完善' : `装备体质 ${matrix!.growth[c.id].equipment_total}`}</small>
+        </th>)}{visibleStock.map(([key, label]) => <th className="stock-column" scope="col" key={key}><a href="#inventory" onClick={() => setInventoryTab(key)}>{label}</a></th>)}</tr></thead>
+        <tbody>{workspace.slots.map(slot => <tr key={slot.key}><th scope="row">{slot.name}</th>{matrix!.characters.map(c => {
           const cell = matrix!.cells[c.id][slot.key];
           const equipment = cell.equipment;
-          return <td key={c.id} className={`cell-${cell.status}`}><button className="equipment-cell" disabled={pending} aria-label={`${c.name} ${slot.name}`} title={equipment ? `${equipment.source_name} · ${equipment.actual_grade}品\n${cell.reasons.join('；') || '已达标'}\n${equipment.note}` : cell.reasons.join('；')} onClick={() => setEditing({ character: c, slot: slot.key, slotName: slot.name, cell })}>
-            <span className="cell-top"><strong>{cell.label}</strong><span className="state-mark">{cell.status === 'met' ? '✓' : cell.status === 'unset' ? '·' : cell.status === 'grade_met' ? '△' : '!'}</span></span>
-            <span className="cell-detail">{equipment ? `${equipment.actual_grade} 品` : '点击录入'}<span>{cell.status === 'met' ? (account.comparison_mode === 'combined' ? '完全达标' : '已达标') : cell.status === 'grade_met' ? '仅品级达标' : cell.status === 'unset' ? '目标待设置' : equipment ? (account.comparison_mode === 'combined' ? '品级不足' : '待提升') : '空缺'}</span></span>
+          const status = cell.status === 'met' ? (account.comparison_mode === 'combined' ? '完全达标' : '已达标') : cell.status === 'grade_met' ? '仅品级达标' : cell.status === 'unset' ? '目标待设置' : equipment ? (account.comparison_mode === 'combined' ? '品级不足' : '待提升') : '空缺';
+          const detail = [equipment && `${equipment.source_name} · ${equipment.actual_grade} 品`, status, ...cell.reasons, equipment?.note].filter(Boolean).join('；');
+          return <td key={c.id} className={`cell-${cell.status}`}><button className="equipment-cell" disabled={pending} aria-label={`${c.name} ${slot.name}`} aria-description={detail} title={detail} onClick={() => setEditing({ character: c, slot: slot.key, slotName: slot.name, cell })}>
+            <strong>{equipment ? cell.label : '＋'}</strong>
+            {equipment && <span className="cell-grade">{equipment.actual_grade}</span>}
+            {cell.status === 'grade_met' && <span aria-hidden="true">△</span>}
+            {cell.status === 'gap' && <span aria-hidden="true">!</span>}
           </button></td>;
+        })}{visibleStock.map(([key]) => {
+          // Both ring slots share one pool. Show it once so quantities cannot be counted twice.
+          const items = stock[key].get(slot.key === 'ring1' ? 'ring' : slot.key) ?? [];
+          const describe = (item: InventoryItem) => `${item.label} ×${item.quantity}`;
+          return <td className="stock-cell" key={key} title={items.map(item => `${describe(item)} · ${item.equipment.actual_grade} 品`).join('、')}>
+            {items.slice(0, 2).map(item => <span key={item.id}>{describe(item)}</span>)}
+            {items.length > 2 && <small>另 {items.length - 2} 种</small>}
+          </td>;
         })}</tr>)}</tbody>
       </table></div>}
-      <p className="matrix-note">{account.target_grade === null ? '尚未设置目标，当前不作达标判断。' : account.comparison_mode !== 'grade' ? `目标 ${account.target_grade} 品：高于目标即完全达标；同品级需同时有体质孔、绿字达标。${account.comparison_mode === 'combined' ? '同品级缺孔或绿字未达标时显示淡黄。' : ''}` : `目标 ${account.target_grade} 品：只比较真实品级。`} 体质数据不影响装备比较。</p>
     </section>}
-    {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.6</span></footer>
-    {panel && <Modal title={panel === 'people' ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel !== 'people'} busy={pending}>
+    {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} tab={inventoryTab} setTab={setInventoryTab}/> }
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.7</span></footer>
+    {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
-      <fieldset disabled={pending}>{panel === 'people' ? <People data={data} run={run} selectAccount={id => load(id, cycleId)} onDirty={setPeopleDirty}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
-      {pending && <p role="status">正在保存…</p>}
+      <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
+      {pending ? <p role="status">正在处理…</p> : notice && <p role="status" className="message success">{notice}</p>}
     </Modal>}
     {growthCharacter && <Modal title={`${growthCharacter.name} · 养成与体质`} close={closeGrowth} wide busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}

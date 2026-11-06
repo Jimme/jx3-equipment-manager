@@ -46,23 +46,29 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
     }
   }, [type]);
   const [sourceChoice, setSourceChoice] = useState(current ? 'saved' : '');
-  const [sources, setSources] = useState<Source[]>([]);
+  const [historicalSources, setHistoricalSources] = useState<Source[]>([]);
   const [sourceError, setSourceError] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [baseDefault, setBaseDefault] = useState<{ value: number | null; status: string } | null>(null);
   useEffect(() => {
     let active = true;
     setBaseDefault(null);
     const grade = Number(fields.actual_grade);
-    if (!fields.cycle_origin_id || !Number.isInteger(grade) || grade <= 0) return;
+    if (!detailsOpen || !fields.cycle_origin_id || !Number.isInteger(grade) || grade <= 0) return;
     const timer=window.setTimeout(() => { api<{value:number|null;status:string}>(`/cycles/${fields.cycle_origin_id}/base-stat?actual_grade=${grade}&equipment_type=${type}`).then(value=>{if(active)setBaseDefault(value);}).catch(()=>{if(active)setBaseDefault({value:null,status:'unavailable'});}); },150);
     return () => {active=false;window.clearTimeout(timer);};
-  },[fields.cycle_origin_id,fields.actual_grade,type]);
+  },[detailsOpen,fields.cycle_origin_id,fields.actual_grade,type]);
   useEffect(() => {
     let active = true;
-    setSources([]); setSourceError('');
-    if (fields.cycle_origin_id) api<Source[]>(`/cycles/${fields.cycle_origin_id}/sources`).then(s => { if (active) setSources(s); }).catch(e => { if (active) setSourceError(e.message); });
+    setHistoricalSources([]); setSourceError('');
+    if (fields.cycle_origin_id && fields.cycle_origin_id !== data.cycleId) {
+      api<Source[]>(`/cycles/${fields.cycle_origin_id}/sources`)
+        .then(s => { if (active) setHistoricalSources(s); })
+        .catch(e => { if (active) setSourceError(e.message); });
+    }
     return () => { active = false; };
-  }, [fields.cycle_origin_id]);
+  }, [fields.cycle_origin_id, data.cycleId]);
+  const sources = fields.cycle_origin_id === data.cycleId ? data.sources : historicalSources;
   const templates = data.templates.filter(t => t.equipment_type === type);
   const changed = !current || JSON.stringify(fields) !== JSON.stringify(fieldsFor(current)) || JSON.stringify(choices) !== JSON.stringify(draftChoices(initialChoices));
   const canCopyLast = allowCopy && lastEquipment?.equipment_type === type;
@@ -102,7 +108,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
         <BinaryChoice title="绿字是否达标" value={fields.green_stats_ok} yes="达标" no="未达标" hint="内防＋外防＋加速" onChange={value => setFields({ ...fields, green_stats_ok: value })}/>
       </div>
       {sourceError && <p role="alert" className="message error">来源加载失败：{sourceError}</p>}
-      <details className="optional-fields"><summary>更多信息</summary>
+      <details className="optional-fields" onToggle={e => setDetailsOpen(e.currentTarget.open)}><summary>更多信息</summary>
         <h3>{type === 'weapon' ? '附魔与五彩石' : '附魔'}</h3><ChoicesFields value={choices} onChange={setChoices} weapon={type === 'weapon'} cycleId={fields.cycle_origin_id} equipmentType={type}/>
         <div className="form-grid">
           <label>装备名称（可空）<input aria-label="装备名称" maxLength={100} value={fields.name} onChange={e => setFields({ ...fields, name: e.target.value })}/></label>

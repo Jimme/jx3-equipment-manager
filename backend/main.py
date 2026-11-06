@@ -11,13 +11,13 @@ from sqlalchemy.orm import Session
 
 from .database import ROOT, get_data_dir, make_engine, migrate
 from .domain import SLOT_KEYS, SLOTS, compare, equipment_type, label
-from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle, EquipmentConfig, SlotSetting, Source, Template, Workspace, WornEquipment
-from .services import new_id, dump, require, audit, create_template, create_config, choices_for, template_view
+from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle, CycleBaseStat, SlotSetting, Source, Template, Workspace, WornEquipment
+from .services import BASE_STAT_MATCH, new_id, dump, require, audit, create_template, create_config, choices_for, template_snapshot
 from .inventory import make_inventory_router
 from .cycle_data import make_cycle_data_router
-from .growth import make_growth_router, growth_report
+from .growth import make_growth_router, growth_reports, load_growth_slots
 from .data_management import make_data_router
-from .schemas import AccountPreferences, ActiveCycle, CycleInput, EquipInput, NamedInput, RaidCheckInput, SourceInput, TemplateInput
+from .schemas import AccountPreferences, AccountPreferencesPatch, ActiveCycle, CycleInput, EquipInput, NamedInput, RaidCheckInput, SourceInput, TemplateInput
 
 
 def create_app(data_dir: Path | None = None):
@@ -32,7 +32,7 @@ def create_app(data_dir: Path | None = None):
         yield
         engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.6", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.7", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.6"}
+        return {"status": "ok", "version": "0.1.7"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -123,11 +123,21 @@ def create_app(data_dir: Path | None = None):
 
     @app.put("/api/accounts/{account_id}/preferences")
     def preferences(account_id: str, payload: AccountPreferences, session: Session = DB):
-        account = require(session, Account, account_id)
-        for key, value in payload.model_dump().items():
-            setattr(account, key, value)
+        return save_preferences(account_id, payload.model_dump(), session)
+
+    @app.patch("/api/accounts/{account_id}/preferences")
+    def patch_preferences(account_id: str, payload: AccountPreferencesPatch, session: Session = DB):
+        return save_preferences(account_id, payload.model_dump(exclude_unset=True), session)
+
+    def save_preferences(account_id, values, session):
+        if not values:
+            return dump(require(session, Account, account_id))
+        account = session.scalar(update(Account).where(Account.id == account_id).values(**values).returning(Account))
+        if account is None:
+            raise HTTPException(404, "记录不存在，请刷新后重试")
+        result = dump(account)
         session.commit()
-        return dump(account)
+        return result
 
     def account_character(session, account_id, character_id):
         account = require(session, Account, account_id)
@@ -234,10 +244,11 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/templates")
     def templates(equipment_type: str | None = None, session: Session = DB):
-        query = select(Template)
+        query = select(Template, CycleBaseStat.constitution).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
         if equipment_type:
             query = query.where(Template.equipment_type == equipment_type)
-        return [template_view(session, t) for t in session.scalars(query.order_by(Template.actual_grade.desc(), Template.id))]
+        return [template_snapshot(template, base) for template, base in session.execute(
+            query.order_by(Template.actual_grade.desc(), Template.id))]
 
     @app.post("/api/templates", status_code=201)
     def add_template(payload: TemplateInput, session: Session = DB):
@@ -247,18 +258,18 @@ def create_app(data_dir: Path | None = None):
         return dump(template)
 
     @app.get("/api/accounts/{account_id}/matrix")
-    def matrix(account_id: str, session: Session = DB):
+    def matrix(account_id: str, include_archived: bool = False, session: Session = DB):
         account = require(session, Account, account_id)
-        characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
-        records = session.execute(
-            select(WornEquipment, Template, EquipmentConfig).join(Character, Character.id == WornEquipment.character_id)
-            .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
-            .outerjoin(Template, Template.id == EquipmentConfig.template_id)
-            .where(Character.account_id == account_id, Character.archived.is_(False))
-        ).all()
+        query = select(Character).where(Character.account_id == account_id).order_by(Character.sort_order, Character.name, Character.id)
+        if not include_archived:
+            query = query.where(Character.archived.is_(False))
+        all_characters = list(session.scalars(query))
+        characters = [character for character in all_characters if not character.archived]
+        records = load_growth_slots(session, [character.id for character in characters])
         cells = {}
-        for worn, template, config in records:
-            equipment = template_view(session, template) if template else None
+        for row in records:
+            worn, template, config = row.WornEquipment, row.Template, row.EquipmentConfig
+            equipment = template_snapshot(template, row.base) if template else None
             comparison = compare(template.actual_grade if template else None,
                                  template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False,
@@ -268,8 +279,12 @@ def create_app(data_dir: Path | None = None):
                 "choices": choices_for(config) if config else None,
                 "label": label(template.short_label, template.has_constitution_socket, template.green_stats_ok) if template else "未装备",
             }
-        return {"account": dump(account), "characters": [dump(c) for c in characters], "cells": cells, "growth": {c.id: {k: v for k, v in growth_report(session, c).items() if k in ("known_subtotal", "equipment_total", "verified_total", "buffs")} for c in characters},
+        reports = growth_reports(session, characters, records)
+        result = {"account": dump(account), "characters": [dump(c) for c in characters], "cells": cells, "growth": {character_id: {key: report[key] for key in ("known_subtotal", "equipment_total", "verified_total", "buffs")} for character_id, report in reports.items()},
                 "constitution": {"status": "per_character", "message": "体质与层数按角色计算，详见 growth 字段", "total": None, "stacks": None}}
+        if include_archived:
+            result["all_characters"] = [dump(character) for character in all_characters]
+        return result
 
     def writable_slot(session, account_id, character_id, slot):
         account, character = account_character(session, account_id, character_id)

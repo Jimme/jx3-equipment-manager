@@ -57,7 +57,7 @@ test('多账号连续创建角色、切换草稿、移除与恢复保持归属�
   await raid.getByRole('checkbox', { name: '25pt' }).click();
   await expect(page.getByRole('alert')).toHaveText('测试保存失败');
   await expect(raid.getByRole('checkbox', { name: '25pt' })).not.toBeChecked();
-  await expect(page.getByRole('button', { name: '乙角色 帽子', exact: true })).toContainText('1234 品');
+  await expect(page.getByRole('button', { name: '乙角色 帽子', exact: true })).toHaveAccessibleDescription(/1234 品/);
   await page.getByRole('button', { name: '乙角色 帽子', exact: true }).click();
   await expect(dialog.getByRole('button', { name: '清除穿戴', exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();

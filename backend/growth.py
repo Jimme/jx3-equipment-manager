@@ -4,15 +4,15 @@ import json
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from .domain import SLOTS
-from .models import (Account, Character, CharacterCalculation, Cycle, CycleBuffThreshold,
+from .models import (Account, Character, CharacterCalculation, Cycle, CycleBaseStat, CycleBuffThreshold,
                      CycleEnchantStat, CycleRainbowStat, CycleRefineStat, CycleStoneStat,
                      EquipmentConfig, SlotSetting, Template, Workspace, WornEquipment)
 from .schemas import GrowthInput
-from .services import audit, dump, require, template_view
+from .services import BASE_STAT_MATCH, audit, dump, require
 
 
 def thresholds_for(session, cycle_id):
@@ -29,7 +29,7 @@ def component(value=None, source='', applicable=True):
     return {'value': value, 'status': 'not_applicable' if not applicable else 'unknown' if value is None else 'known', 'source': source}
 
 
-def attachment(session, template, config, prefix):
+def attachment(config, prefix, default_constitution):
     state = getattr(config, prefix + '_state')
     if state == 'not_applicable':
         return component(applicable=False)
@@ -41,9 +41,7 @@ def attachment(session, template, config, prefix):
     if override is not None:
         return component(override, '装备手填覆盖')
     name = getattr(config, prefix + '_name')
-    model, key = (CycleEnchantStat, (template.cycle_origin_id, template.equipment_type, name)) if prefix == 'enchant' else (CycleRainbowStat, (template.cycle_origin_id, name))
-    stat = session.get(model, key)
-    return component(stat.constitution if stat else None, f'原周期配置：{name}')
+    return component(default_constitution, f'原周期配置：{name}')
 
 
 def rule_error(rows):
@@ -59,34 +57,80 @@ def rule_error(rows):
     return ''
 
 
-def growth_report(session, character):
+def load_growth_slots(session, character_ids):
+    if not character_ids:
+        return []
+    return session.execute(
+        select(WornEquipment, SlotSetting, Template, EquipmentConfig,
+               Cycle.name.label('cycle_name'), CycleBaseStat.constitution.label('base'),
+               CycleRefineStat.constitution.label('refine'), CycleStoneStat.constitution.label('stone'),
+               CycleEnchantStat.constitution.label('enchant'), CycleRainbowStat.constitution.label('rainbow'))
+        .select_from(WornEquipment)
+        .join(SlotSetting, and_(SlotSetting.character_id == WornEquipment.character_id, SlotSetting.slot == WornEquipment.slot))
+        .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
+        .outerjoin(Template, Template.id == EquipmentConfig.template_id)
+        .outerjoin(Cycle, Cycle.id == Template.cycle_origin_id)
+        .outerjoin(CycleBaseStat, BASE_STAT_MATCH)
+        .outerjoin(CycleRefineStat, and_(
+            CycleRefineStat.cycle_id == Template.cycle_origin_id,
+            CycleRefineStat.actual_grade == Template.actual_grade,
+            CycleRefineStat.equipment_type == Template.equipment_type,
+            CycleRefineStat.refine_level == SlotSetting.refine_level,
+        ))
+        .outerjoin(CycleStoneStat, and_(
+            CycleStoneStat.cycle_id == Template.cycle_origin_id,
+            CycleStoneStat.stone_level == SlotSetting.stone_level,
+        ))
+        .outerjoin(CycleEnchantStat, and_(
+            CycleEnchantStat.cycle_id == Template.cycle_origin_id,
+            CycleEnchantStat.equipment_type == Template.equipment_type,
+            CycleEnchantStat.name == EquipmentConfig.enchant_name,
+        ))
+        .outerjoin(CycleRainbowStat, and_(
+            CycleRainbowStat.cycle_id == Template.cycle_origin_id,
+            CycleRainbowStat.name == EquipmentConfig.rainbow_name,
+        ))
+        .where(WornEquipment.character_id.in_(character_ids))
+    ).all()
+
+
+def growth_reports(session, characters, slots):
+    if not characters:
+        return {}
     workspace = session.get(Workspace, 1)
     cycle = session.get(Cycle, workspace.active_cycle_id) if workspace.active_cycle_id else None
     thresholds = thresholds_for(session, cycle.id if cycle else None)
-    calculation = require(session, CharacterCalculation, character.id)
+    signature = threshold_signature(thresholds)
+    calculations = {row.character_id: row for row in session.scalars(select(CharacterCalculation).where(
+        CharacterCalculation.character_id.in_([character.id for character in characters])))}
+    records = defaultdict(dict)
+    for row in slots:
+        worn = row.WornEquipment
+        records[worn.character_id][worn.slot] = row
+    return {character.id: growth_report_for(character, cycle, thresholds, signature, calculations[character.id],
+                                            records[character.id]) for character in characters}
+
+
+def growth_report(session, character):
+    return growth_reports(session, [character], load_growth_slots(session, [character.id]))[character.id]
+
+
+def growth_report_for(character, cycle, thresholds, signature, calculation, records):
     confirmation_valid = (calculation.scope_confirmed and cycle is not None and
                           calculation.threshold_cycle_id == cycle.id and
-                          calculation.threshold_signature == threshold_signature(thresholds))
-    settings = {r.slot: r for r in session.scalars(select(SlotSetting).where(SlotSetting.character_id == character.id))}
-    records = {w.slot: (w, t, config) for w, t, config in session.execute(
-        select(WornEquipment, Template, EquipmentConfig)
-        .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
-        .outerjoin(Template, Template.id == EquipmentConfig.template_id)
-        .where(WornEquipment.character_id == character.id))}
+                          calculation.threshold_signature == signature)
     rows, missing, known = [], [], 0
     titles = {'base': '基础体质', 'refine': '精炼加成', 'stone': '五行石', 'enchant': '附魔', 'rainbow': '五彩石'}
-    cycles = {r.id: r.name for r in session.scalars(select(Cycle))}
     for slot, name in SLOTS:
-        worn, template, config = records[slot]
-        setting = settings[slot]
+        row = records[slot]
+        template, config, setting = row.Template, row.EquipmentConfig, row.SlotSetting
         if not template:
             parts = {key: component(applicable=False) for key in titles}
             missing.append(f'{name}：未装备')
         else:
-            base = template_view(session, template)['base_stat']
-            parts = {'base': component(base['value'], '单件覆盖' if base['source'] == 'override' else '原周期默认')}
-            refine = session.get(CycleRefineStat, (template.cycle_origin_id, template.actual_grade, template.equipment_type, setting.refine_level)) if setting.refine_level is not None else None
-            parts['refine'] = component(refine.constitution if refine else None, '精炼等级未录入' if setting.refine_level is None else f'原周期 {template.actual_grade}品 / 精炼{setting.refine_level}')
+            override = template.base_constitution_override
+            parts = {'base': component(row.base if override is None else override, '原周期默认' if override is None else '单件覆盖')}
+            parts['refine'] = component(row.refine, '精炼等级未录入' if setting.refine_level is None else f'原周期 {template.actual_grade}品 / 精炼{setting.refine_level}')
             if not template.has_constitution_socket:
                 parts['stone'] = component(applicable=False, source='装备无体质孔，等级配置仍保留')
             elif setting.stone_state == 'none':
@@ -94,10 +138,9 @@ def growth_report(session, character):
             elif setting.stone_state == 'unknown':
                 parts['stone'] = component(source='镶嵌状态未录入')
             else:
-                stat = session.get(CycleStoneStat, (template.cycle_origin_id, setting.stone_level))
-                parts['stone'] = component(stat.constitution if stat else None, f'原周期 五行石{setting.stone_level}级')
-            parts['enchant'] = attachment(session, template, config, 'enchant')
-            parts['rainbow'] = attachment(session, template, config, 'rainbow') if slot == 'weapon' else component(applicable=False)
+                parts['stone'] = component(row.stone, f'原周期 五行石{setting.stone_level}级')
+            parts['enchant'] = attachment(config, 'enchant', row.enchant)
+            parts['rainbow'] = attachment(config, 'rainbow', row.rainbow) if slot == 'weapon' else component(applicable=False)
             for key, part in parts.items():
                 if part['status'] == 'unknown':
                     missing.append(f'{name}：{titles[key]}未完善（{part["source"]}）')
@@ -105,7 +148,7 @@ def growth_report(session, character):
                     known += part['value']
         rows.append({'slot': slot, 'name': name, 'settings': dump(setting), 'equipped': template is not None,
                      'grade': template.actual_grade if template else None,
-                     'cycle_name': cycles[template.cycle_origin_id] if template else None,
+                     'cycle_name': row.cycle_name,
                      'components': parts})
     equipment_total = known if not missing else None
     verified_total = equipment_total + calculation.additional_constitution if equipment_total is not None and calculation.additional_constitution is not None and confirmation_valid else None

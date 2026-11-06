@@ -54,6 +54,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Local.ps1 -Br
 
 网页“数据与备份”生成并下载一致性快照，另存到其他设备。不要在WAL工作期间只复制活动app.sqlite3。在线导入/恢复需预览确认，替换前自动备份。
 
+已有备份可逐份下载、预览恢复或删除。确认删除后会从服务器的 `data/backups` 移除选中的文件。
+
 网页不可用时：停止应用，保留旧data目录，新建data，把已验证快照命名为app.sqlite3放入，不带入旧WAL/SHM，再用匹配程序版本启动核验。不要用Windows程序经网络共享打开NAS活动SQLite。
 
 ## 开发和发布

@@ -35,6 +35,11 @@ class AccountPreferences(Input):
     comparison_mode: Literal["strict", "grade", "combined"]
 
 
+class AccountPreferencesPatch(AccountPreferences):
+    target_grade: Grade | None = None
+    comparison_mode: Literal["strict", "grade", "combined"] = "strict"
+
+
 class SourceInput(Input):
     source_type: Name
     name: Name

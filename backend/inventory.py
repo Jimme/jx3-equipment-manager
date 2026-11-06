@@ -1,6 +1,7 @@
 """Account-local inventory transactions and read-only upgrade candidates."""
 import hashlib
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,16 +9,28 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .domain import SLOTS, compare, equipment_type, label
-from .models import AuditEvent, Character, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
+from .models import AuditEvent, Character, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
 from .schemas import DropClear, DropTransfer, EquipmentChoices, InventoryAdd, QuantityChange, WarehouseEquip
-from .services import active_account, choices_for, create_config, create_template, dump, new_id, replace_worn, require, template_view, writable_slot
+from .services import (BASE_STAT_MATCH, active_account, choices_for, create_config, create_template, dump,
+                       new_id, replace_worn, require, template_snapshot, template_view, writable_slot)
 
 
 def describe_item(session, row):
     config = require(session, EquipmentConfig, row.config_id)
     template = require(session, Template, config.template_id)
-    return {**dump(row), 'equipment': template_view(session, template), 'choices': choices_for(config),
-            'label': label(template.short_label, template.has_constitution_socket, template.green_stats_ok)}
+    return item_view(row, config, template_view(session, template))
+
+
+def item_view(row, config, equipment):
+    return {**dump(row), 'equipment': equipment, 'choices': choices_for(config),
+            'label': label(equipment['short_label'], equipment['has_constitution_socket'], equipment['green_stats_ok'])}
+
+
+def inventory_rows(model):
+    return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution).select_from(model)
+            .join(EquipmentConfig, EquipmentConfig.id == model.config_id)
+            .join(Template, Template.id == EquipmentConfig.template_id)
+            .outerjoin(CycleBaseStat, BASE_STAT_MATCH))
 
 
 def owned(session, cls, account_id, item_id):
@@ -94,33 +107,39 @@ def make_inventory_router(engine, read_database):
     @router.get('/daily')
     def daily(account_id: str, session: Session = DB):
         account = active_account(session, account_id)
-        warehouse = [describe_item(session, row) for row in session.scalars(select(WarehouseStack).where(WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id))]
-        drops = [describe_item(session, row) for row in session.scalars(select(RaidDrop).where(RaidDrop.account_id == account_id).order_by(RaidDrop.created_at, RaidDrop.id))]
+        warehouse = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
+            inventory_rows(WarehouseStack).where(WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id))]
+        drops = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
+            inventory_rows(RaidDrop).where(RaidDrop.account_id == account_id).order_by(RaidDrop.created_at, RaidDrop.id))]
         state = session.get(RaidMemoState, account_id)
         characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
-        worn = {(row.character_id, row.slot): row for row in session.scalars(select(WornEquipment).join(Character, Character.id == WornEquipment.character_id).where(Character.account_id == account_id))}
+        worn = {(row.character_id, row.slot): (row, template) for row, template in session.execute(
+            select(WornEquipment, Template).select_from(WornEquipment)
+            .join(Character, Character.id == WornEquipment.character_id)
+            .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
+            .outerjoin(Template, Template.id == EquipmentConfig.template_id)
+            .where(Character.account_id == account_id, Character.archived.is_(False)))}
 
-        def rank(template):
-            if not template:
-                return (-1,) if account.comparison_mode == 'grade' else (-1, False, False)
-            return (template.actual_grade,) if account.comparison_mode == 'grade' else (template.actual_grade, template.has_constitution_socket, template.green_stats_ok)
+        def rank(grade, socket=False, green=False):
+            return (grade,) if account.comparison_mode == 'grade' else (grade, socket, green)
+
+        candidates_by_type = defaultdict(list)
+        for item in warehouse:
+            equipment = item['equipment']
+            candidates_by_type[equipment['equipment_type']].append((
+                item['id'], rank(equipment['actual_grade'], equipment['has_constitution_socket'], equipment['green_stats_ok']),
+            ))
 
         gaps = []
         for character in characters:
             for slot, slot_name in SLOTS:
-                record = worn[(character.id, slot)]
-                config = session.get(EquipmentConfig, record.config_id) if record.config_id else None
-                template = session.get(Template, config.template_id) if config else None
+                record, template = worn[(character.id, slot)]
                 result = compare(template.actual_grade if template else None, template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False, account.target_grade, account.comparison_mode)
                 if result['status'] == 'met':
                     continue
-                candidates = []
-                for item in warehouse:
-                    candidate = item['equipment']
-                    candidate_rank = (candidate['actual_grade'],) if account.comparison_mode == 'grade' else (candidate['actual_grade'], candidate['has_constitution_socket'], candidate['green_stats_ok'])
-                    if candidate['equipment_type'] == equipment_type(slot) and candidate_rank > rank(template):
-                        candidates.append(item['id'])
+                current_rank = rank(template.actual_grade, template.has_constitution_socket, template.green_stats_ok) if template else rank(-1)
+                candidates = [item_id for item_id, candidate_rank in candidates_by_type[equipment_type(slot)] if candidate_rank > current_rank]
                 gaps.append({'character_id': character.id, 'character_name': character.name, 'slot': slot, 'slot_name': slot_name,
                              'current_label': label(template.short_label, template.has_constitution_socket, template.green_stats_ok) if template else '未装备',
                              'actual_grade': template.actual_grade if template else None, 'expected_version': record.version,

@@ -1,35 +1,76 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, optionalInteger } from './api';
 import { asDraft, payloadRows, rowFingerprint, STAT_LABELS, STAT_TYPES, VALUE_FIELD } from './cycleDataUtils';
 import { CyclePreviewPanel } from './CyclePreviewPanel';
 import type { CycleData, CyclePreview, Run, StatKind, StatRow } from './types';
 
-export function CycleDataEditor({ data, run, pending, applied, onDirty }: { data: CycleData; run: Run; pending: boolean; applied: (id: string) => Promise<void>; onDirty: (dirty: boolean) => void }) {
+type Draft = { rows: StatRow[]; base: string; fingerprint: string };
+const matrixKey = (grade: number, type: string, refine?: number) => `${grade}:${type}:${refine ?? ''}`;
+
+export function CycleDataEditor({ data, run, pending, applied, onDirty }: { data: CycleData; run: Run; pending: boolean; applied: (id: string) => void; onDirty: (dirty: boolean) => void }) {
   const [kind, setKind] = useState<StatKind>('base');
-  const [drafts, setDrafts] = useState<Partial<Record<StatKind,StatRow[]>>>({});
+  const [drafts, setDrafts] = useState<Partial<Record<StatKind, Draft>>>({});
   const [grade, setGrade] = useState('');
   const [preview, setPreview] = useState<CyclePreview | null>(null);
-  const initial = (key: StatKind): StatRow[] => key === 'stone' ? Array.from({length:8},(_,i) => ({ stone_level: String(i + 1), constitution: String(data.tables.stone.find(r => r.stone_level === i + 1)?.constitution ?? '') })) : asDraft(data.tables[key]);
-  const rows = drafts[kind] ?? initial(kind);
-  const dirty = Object.entries(drafts).some(([key,value]) => rowFingerprint(value!) !== rowFingerprint(initial(key as StatKind)));
-  const currentDirty = rowFingerprint(rows) !== rowFingerprint(initial(kind));
+  const savedTables = useMemo(() => {
+    const tables = new Map<StatKind, { rows: StatRow[]; fingerprint: string }>();
+    for (const key of Object.keys(STAT_LABELS) as StatKind[]) {
+      const rows = key === 'stone' ? Array.from({length:8},(_,i) => ({
+        stone_level: String(i + 1), constitution: String(data.tables.stone.find(r => r.stone_level === i + 1)?.constitution ?? ''),
+      })) : asDraft(data.tables[key]);
+      tables.set(key, { rows, fingerprint: rowFingerprint(rows) });
+    }
+    return tables;
+  }, [data.tables]);
+  const saved = savedTables.get(kind)!;
+  const draft = drafts[kind];
+  const rows = draft?.rows ?? saved.rows;
+  const dirty = Object.entries(drafts).some(([key, value]) => value?.fingerprint !== savedTables.get(key as StatKind)?.fingerprint);
+  const currentDirty = !!draft && draft.fingerprint !== saved.fingerprint;
+  const conflict = currentDirty && draft.base !== saved.fingerprint;
   useEffect(() => { onDirty(dirty); }, [dirty,onDirty]);
   useEffect(() => () => onDirty(false), [onDirty]);
   const readonly = pending || data.cycle.archived;
-  const setRows = (next: StatRow[]) => setDrafts(old => ({...old,[kind]:next}));
+  const matrixIndexes = useMemo(() => {
+    const indexes = new Map<string, number>();
+    if (kind === 'base' || kind === 'refine') {
+      rows.forEach((row, index) => {
+        const key = matrixKey(Number(row.actual_grade), String(row.equipment_type), kind === 'refine' ? Number(row.refine_level) : undefined);
+        if (!indexes.has(key)) indexes.set(key, index);
+      });
+    }
+    return indexes;
+  }, [kind, rows]);
+  const setRows = (next: StatRow[]) => {
+    const fingerprint = rowFingerprint(next);
+    setDrafts(old => {
+      const updated = { ...old };
+      if (fingerprint === saved.fingerprint) delete updated[kind];
+      else {
+        const previous = old[kind];
+        const base = previous && previous.fingerprint !== saved.fingerprint ? previous.base : saved.fingerprint;
+        updated[kind] = { rows: next, base, fingerprint };
+      }
+      return updated;
+    });
+  };
   const valueField = VALUE_FIELD(kind);
   function change(index: number, key: string, value: string) { setRows(rows.map((row,i) => i === index ? {...row,[key]:value} : row)); }
-  function matrixValue(actualGrade: number, type: string, refine?: number) { return rows.find(r => Number(r.actual_grade) === actualGrade && r.equipment_type === type && (refine === undefined || Number(r.refine_level) === refine))?.constitution ?? ''; }
+  function matrixValue(actualGrade: number, type: string, refine?: number) {
+    const index = matrixIndexes.get(matrixKey(actualGrade, type, refine));
+    return index === undefined ? '' : rows[index].constitution ?? '';
+  }
   function matrixChange(actualGrade: number, type: string, value: string, refine?: number) {
-    const index = rows.findIndex(r => Number(r.actual_grade) === actualGrade && r.equipment_type === type && (refine === undefined || Number(r.refine_level) === refine));
-    if (index >= 0) change(index,'constitution',value);
+    const index = matrixIndexes.get(matrixKey(actualGrade, type, refine));
+    if (index !== undefined) change(index,'constitution',value);
     else setRows([...rows,{actual_grade:String(actualGrade),equipment_type:type,...(refine === undefined ? {} : {refine_level:String(refine)}),constitution:value}]);
   }
   function numberInput(value: string | number | null, label: string, update: (value: string) => void) { return <input type="number" min="0" max="2147483647" step="1" aria-label={label} placeholder="未录入" value={value ?? ''} onChange={e => update(e.target.value)}/>; }
-  async function afterApply(id: string) { setDrafts(old => { const next = {...old}; delete next[kind]; return next; }); setPreview(null); await applied(id); }
+  function afterApply(id: string) { setDrafts(old => { const next = {...old}; delete next[kind]; return next; }); setPreview(null); applied(id); }
   const grades = [...new Set(rows.map(r => Number(r.actual_grade)))].sort((a,b) => a-b);
   if (preview) return <CyclePreviewPanel key={preview.preview_id} cycleId={data.cycle.id} preview={preview} run={run} pending={pending} cancel={() => setPreview(null)} applied={afterApply}/>;
   return <section aria-label="周期数值表">
+    {conflict && <p role="alert" className="message error">本表的已保存数据已变化。请核对草稿，放弃本表草稿后再编辑最新数据。</p>}
     <div className="config-toolbar"><label>数值表<select aria-label="数值表" value={kind} disabled={pending} onChange={e => setKind(e.target.value as StatKind)}>{(Object.keys(STAT_LABELS) as StatKind[]).map(key => <option key={key} value={key}>{STAT_LABELS[key]}</option>)}</select></label><div className="button-row"><a className="button-link" href={`/api/cycles/${data.cycle.id}/data/${kind}/csv`} download>导出 CSV</a>{!data.cycle.archived && <label className={`button-link file-button ${pending ? 'disabled' : ''}`}>导入 CSV<input aria-label="导入 CSV" type="file" accept=".csv,text/csv" disabled={pending} onChange={e => { const file=e.target.files?.[0]; e.target.value=''; if (!file) return; if (currentDirty && !window.confirm('本表有未保存的草稿。CSV 不会与草稿合并，确认导入后会替换本表；返回修改仍可保留草稿。继续预览 CSV？')) return; void run(async () => { if (file.size > 2000000) throw new Error('CSV 文件最多 2 MB'); setPreview(await api<CyclePreview>(`/cycles/${data.cycle.id}/data/${kind}/csv-preview`,'POST',{expected_version:data.cycle.version,csv_text:await file.text()})); },'已生成 CSV 导入预览',undefined,false); }}/></label>}</div></div>
     <p className="hint">CSV 导出已保存的数据，不包含草稿；导入会先预览整表替换。空白表示未知，0 表示明确为零。{kind === 'base' ? '默认基础体质按本周期、真实品级和部位查询；单件覆盖优先。戒指两格共用装备默认值。' : kind === 'refine' ? '这里填写额外体质，精炼 0 也不自动假定为零；戒指两格的精炼等级仍独立保存。' : kind === 'buff' ? '阈值为达到该层的最低体质，含等于；从 1 层连续录入。角色数据完整且口径核实后才计算层数。' : '仅填写已核实的值，角色体质明细会按装备原周期查询。'}</p>
     <fieldset disabled={readonly}>
@@ -47,7 +88,7 @@ export function CycleDataEditor({ data, run, pending, applied, onDirty }: { data
         {['enchant','rainbow','buff'].includes(kind) && rows.map((row,i) => <tr key={i}>{kind === 'enchant' && <td><select aria-label={`第${i+1}行部位`} value={String(row.equipment_type)} onChange={e => change(i,'equipment_type',e.target.value)}>{STAT_TYPES.map(([type,name]) => <option key={type} value={type}>{name}</option>)}</select></td>}<td><input aria-label={`第${i+1}行${kind === 'buff' ? '技能名称' : '名称'}`} maxLength={100} value={String(row[kind === 'buff' ? 'skill' : 'name'] ?? '')} onChange={e => change(i,kind === 'buff' ? 'skill' : 'name',e.target.value)}/></td>{kind === 'buff' && <td>{numberInput(row.stacks,`第${i+1}行层数`,value => change(i,'stacks',value))}</td>}<td>{numberInput(row[valueField],`第${i+1}行${kind === 'buff' ? '阈值' : '体质'}`,value => change(i,valueField,value))}</td><td><button type="button" onClick={() => setRows(rows.filter((_,j) => j !== i))}>移除此行</button></td></tr>)}
       </tbody></table></div>
       {['enchant','rainbow','buff'].includes(kind) && <button type="button" onClick={() => setRows([...rows,kind === 'buff' ? {skill:'',stacks:'',threshold:''} : { ...(kind === 'enchant' ? {equipment_type:'hat'} : {}),name:'',constitution:''}])}>添加一行</button>}
-      <div className="dialog-actions"><button disabled={!currentDirty} onClick={() => setDrafts(old => {const next={...old};delete next[kind];return next;})}>放弃本表草稿</button><button className="primary" disabled={!currentDirty} onClick={() => { void run(async () => setPreview(await api<CyclePreview>(`/cycles/${data.cycle.id}/data/${kind}/preview`,'POST',{expected_version:data.cycle.version,rows:payloadRows(rows)})),'已生成变更预览',undefined,false); }}>预览更改</button></div>
+      <div className="dialog-actions"><button disabled={!currentDirty} onClick={() => setDrafts(old => {const next={...old};delete next[kind];return next;})}>放弃本表草稿</button><button className="primary" disabled={!currentDirty || conflict} onClick={() => { void run(async () => setPreview(await api<CyclePreview>(`/cycles/${data.cycle.id}/data/${kind}/preview`,'POST',{expected_version:data.cycle.version,rows:payloadRows(rows)})),'已生成变更预览',undefined,false); }}>预览更改</button></div>
     </fieldset>
     {data.cycle.archived && <p className="hint">归档周期只读，可以导出或复制。</p>}
   </section>;

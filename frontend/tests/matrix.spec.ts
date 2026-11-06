@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄屏', async ({ page }) => {
+test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄屏', async ({ page, request }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
@@ -67,24 +67,28 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(dialog).not.toBeVisible();
   let cell = page.getByRole('button', { name: '测试角色1 帽子', exact: true });
   await expect(cell).toContainText('pt-+');
-  await expect(cell).toContainText('待提升');
+  await expect(cell).toHaveAccessibleDescription(/待提升/);
+  const targetInput = page.getByLabel('目标真实品级', { exact: true });
+  await targetInput.fill('1200');
   await page.getByLabel('比较模式').selectOption('combined');
-  await expect(cell).toContainText('仅品级达标');
+  await expect(cell).toHaveAccessibleDescription(/仅品级达标/);
+  await expect(targetInput).toHaveValue('1200');
   await expect(cell.locator('..')).toHaveClass('cell-grade_met');
   await expect(page.getByRole('button', { name: '测试角色1 上衣', exact: true }).locator('..')).toHaveClass('cell-missing');
   await page.reload();
   await expect(page.getByLabel('比较模式')).toHaveValue('combined');
-  await expect(cell).toContainText('仅品级达标');
+  await expect(targetInput).toHaveValue('1110');
+  await expect(cell).toHaveAccessibleDescription(/仅品级达标/);
   await page.getByLabel('比较模式').selectOption('grade');
-  await expect(cell).toContainText('已达标');
+  await expect(cell).toHaveAccessibleDescription(/已达标/);
   await page.getByLabel('比较模式').selectOption('strict');
-  await expect(cell).toContainText('待提升');
+  await expect(cell).toHaveAccessibleDescription(/待提升/);
   await cell.click();
   await expect(dialog).toContainText('同品级缺体质孔');
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
   await dialog.getByRole('button', { name: /^保存(装备|记录)$/ }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(cell).toContainText('已达标');
+  await expect(cell).toHaveAccessibleDescription(/已达标/);
   await page.getByRole('button', { name: '周期与来源', exact: true }).click();
   await dialog.getByRole('button', { name: '编辑来源', exact: true }).click();
   await dialog.getByLabel('默认真实品级').fill('1200');
@@ -94,9 +98,9 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByRole('button', { name: '删除来源', exact: true }).click();
   await expect(dialog.getByText('pt · 1200 品')).toHaveCount(0);
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-  await expect(cell).toContainText('1110 品');
+  await expect(cell).toHaveAccessibleDescription(/1110 品/);
   await page.reload();
-  await expect(page.getByRole('button', { name: '测试角色1 帽子', exact: true })).toContainText('1110 品');
+  await expect(page.getByRole('button', { name: '测试角色1 帽子', exact: true })).toHaveAccessibleDescription(/1110 品/);
   await page.getByRole('button', { name: '账号与角色', exact: true }).click();
   await dialog.getByRole('button', { name: '＋ 添加账号', exact: true }).click();
   await dialog.getByLabel('管理名称').fill('隔离测试账号');
@@ -105,8 +109,12 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByLabel('游戏账号', { exact: true }).selectOption({ label: '隔离测试账号' });
   await expect(page.getByText('这个账号还没有角色')).toBeVisible();
+  await page.getByRole('button', { name: '添加角色', exact: true }).click();
+  await expect(dialog.getByLabel('管理名称')).toBeFocused();
+  await expect(dialog.getByRole('button', { name: '保存角色', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByLabel('游戏账号', { exact: true }).selectOption({ label: '浏览器测试账号' });
-  await expect(cell).toContainText('1110 品');
+  await expect(cell).toHaveAccessibleDescription(/1110 品/);
   await page.getByRole('button', { name: '周期与来源', exact: true }).click();
   await dialog.getByRole('button', { name: '＋ 新建周期', exact: true }).click();
   await dialog.getByLabel('周期名称').fill('下一测试周期');
@@ -114,7 +122,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(dialog.getByRole('heading', { name: '当前周期：下一测试周期' })).toBeVisible();
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(page.getByLabel('装备周期', { exact: true }).locator('option:checked')).toHaveText('下一测试周期');
-  await expect(cell).toContainText('1110 品');
+  await expect(cell).toHaveAccessibleDescription(/1110 品/);
   await cell.click();
   await expect(dialog.getByLabel('装备原始周期').locator('option:checked')).toHaveText('浏览器测试周期');
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
@@ -124,10 +132,13 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByLabel('从已有模板复制').selectOption(templateId!);
   await dialog.getByRole('button', { name: /^保存(装备|记录)$/ }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole('button', { name: '测试角色2 帽子', exact: true })).toContainText('1110 品');
+  await expect(page.getByRole('button', { name: '测试角色2 帽子', exact: true })).toHaveAccessibleDescription(/1110 品/);
   await page.getByLabel('比较模式').selectOption('combined');
-  await expect(cell).toContainText('完全达标');
-  await page.setViewportSize({ width: 1440, height: 1080 });
+  await expect(cell).toHaveAccessibleDescription(/完全达标/);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const matrixSize = (await page.locator('.matrix').boundingBox())!;
+  expect(matrixSize.height).toBeLessThan(430);
+  expect(matrixSize.width).toBeLessThan(1180);
   await page.screenshot({ path: '../.tools/screenshots/phase1-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.matrix-scroll')).toBeVisible();
@@ -158,5 +169,19 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(dialog.getByLabel('装备名称', { exact: true })).toHaveValue('手动测试戒指');
   await expect(dialog.getByLabel('基础体质覆盖')).toHaveValue('0');
   await expect(dialog.getByLabel('备注', { exact: true })).toHaveValue('验证折叠后仍保留输入');
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+
+  const accountId = await page.getByLabel('游戏账号', { exact: true }).inputValue();
+  const otherPageChange = await request.patch(`/api/accounts/${accountId}/preferences`, { data: { target_grade: 1250 } });
+  expect(otherPageChange.ok()).toBeTruthy();
+  await page.getByLabel('比较模式').selectOption('grade');
+  await expect(targetInput).toHaveValue('1250');
+
+  const cycleSelect = page.getByLabel('装备周期', { exact: true });
+  const olderCycle = await cycleSelect.getByRole('option', { name: '浏览器测试周期', exact: true }).getAttribute('value');
+  const otherCycleChange = await request.put('/api/workspace/active-cycle', { data: { cycle_id: olderCycle } });
+  expect(otherCycleChange.ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(cycleSelect).toHaveValue(olderCycle!);
   expect(errors).toEqual([]);
 });

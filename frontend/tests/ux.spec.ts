@@ -102,9 +102,19 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await page.getByRole('button', { name: '保存数量', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('操作已提交，但页面刷新失败');
   expect((await state()).warehouse[0].quantity).toBe(3);
-  await page.getByRole('button', { name: '保存数量', exact: true }).click();
   await expect(page.getByLabel('实际数量')).toHaveCount(0);
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(page.getByRole('button', { name: '修改U-数量', exact: true })).toContainText('3 件');
   expect((await state()).warehouse[0].quantity).toBe(3);
+  const sourceReads: string[] = [];
+  const baseReads: string[] = [];
+  page.on('request', req => {
+    const path = new URL(req.url()).pathname;
+    if (req.method() === 'GET' && path === `/api/cycles/${cycle.id}/sources`) sourceReads.push(req.url());
+    if (req.method() === 'GET' && path === `/api/cycles/${cycle.id}/base-stat`) baseReads.push(req.url());
+  });
+  await expect(page.getByText('已刷新', { exact: true })).toBeVisible();
+  sourceReads.length = 0;
   await page.getByRole('button', { name: '添加库存', exact: true }).click();
   await dialog.getByLabel('来源预设').selectOption(source.id);
   await dialog.getByLabel('库存装备部位').selectOption('weapon');
@@ -112,7 +122,17 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1110');
   await expect(dialog.getByRole('group', { name: '是否有体质孔' }).locator('input:checked')).toHaveCount(0);
   await expect(dialog.getByLabel('录入数量')).toBeVisible();
+  expect(sourceReads).toHaveLength(0);
+  expect(baseReads).toHaveLength(0);
   await dialog.screenshot({ path: '../.tools/screenshots/ux-add.png' });
+  await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
+  await dialog.getByText('更多信息', { exact: true }).click();
+  await expect.poll(() => baseReads.length).toBe(1);
+  await dialog.getByLabel('附魔', { exact: true }).selectOption('configured');
+  await dialog.getByText('更多信息', { exact: true }).click();
+  await dialog.getByRole('button', { name: '保存库存', exact: true }).click();
+  await expect(dialog.getByLabel('附魔名称', { exact: true })).toBeFocused();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('tab', { name: '缺口明细', exact: true }).click();
   await expect(page.getByLabel('只看仓库可改善')).toBeChecked();

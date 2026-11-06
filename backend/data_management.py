@@ -329,7 +329,7 @@ def make_data_router(engine, read_database):
             yield session
 
     def backup_path(filename):
-        folder = (directory / 'backups').resolve()
+        folder = directory.resolve() / 'backups'
         if not re.fullmatch(r'[A-Za-z0-9_-]+\.sqlite3', filename):
             raise HTTPException(404, '备份不存在')
         path = folder / filename
@@ -371,6 +371,17 @@ def make_data_router(engine, read_database):
     def download_backup(filename: str):
         return FileResponse(backup_path(filename), media_type='application/vnd.sqlite3', filename=filename, headers={'Cache-Control': 'no-store'})
 
+    @router.delete('/backups/{filename}')
+    def delete_backup(filename: str):
+        path = backup_path(filename)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            raise HTTPException(404, '备份不存在')
+        except OSError:
+            raise HTTPException(503, '备份删除失败，请检查目录权限或稍后重试')
+        return {'name': filename}
+
     def make_preview(tables, kind):
         with Session(engine.execution_options(sqlite_immediate=True)) as session:
             current = snapshot(session)
@@ -403,12 +414,15 @@ def make_data_router(engine, read_database):
     @router.post('/backups/{filename}/restore-preview')
     def stored_restore_preview(filename: str):
         path = backup_path(filename)
-        if path.stat().st_size > MAX_BYTES:
-            raise HTTPException(413, '文件最多 32 MB；更大备份请按停机恢复说明操作')
         try:
-            raw = path.read_bytes()
+            with path.open('rb') as backup:
+                raw = backup.read(MAX_BYTES + 1)
+        except FileNotFoundError:
+            raise HTTPException(404, '备份不存在')
         except OSError:
             raise HTTPException(503, '备份无法读取，请检查文件和目录权限')
+        if len(raw) > MAX_BYTES:
+            raise HTTPException(413, '文件最多 32 MB；更大备份请按停机恢复说明操作')
         return make_preview(sqlite_document(raw, directory), 'restore')
 
     @router.post('/changes/{preview_id}/apply')

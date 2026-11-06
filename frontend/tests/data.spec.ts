@@ -62,10 +62,21 @@ test('数据维护：下载、无效文件、预览取消、冲突保护、JSON 
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('heading',{name:'数据验收账号装备矩阵'})).toBeVisible();
   await page.getByRole('button',{name:'数据与备份',exact:true}).click();
-  await dialog.getByText(/已有数据库备份 ·/).click();
   const stored=dialog.getByRole('group',{name:dbFile.suggestedFilename(),exact:true});
   await expect(stored).toBeVisible();
+  const backupsBefore = await (await request.get('/api/data/backups')).json();
   await stored.getByRole('button',{name:'预览恢复',exact:true}).click();
   await expect(dialog.getByRole('heading',{name:'数据库恢复预览',exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'返回',exact:true}).click();
+  page.once('dialog', prompt => prompt.dismiss());
+  await stored.getByRole('button',{name:'删除备份',exact:true}).click();
+  await expect(stored).toBeVisible();
+  page.once('dialog', prompt => prompt.accept());
+  await stored.getByRole('button',{name:'删除备份',exact:true}).click();
+  await expect(stored).toHaveCount(0);
+  expect((await request.get(`/api/data/backups/${dbFile.suggestedFilename()}`)).status()).toBe(404);
+  expect(await (await request.get('/api/data/backups')).json()).toEqual(
+    backupsBefore.filter((backup: {name: string}) => backup.name !== dbFile.suggestedFilename()),
+  );
   expect(errors).toEqual([]);
 });

@@ -3,7 +3,7 @@ import { api } from './api';
 import { dimensionText, STAT_LABELS } from './cycleDataUtils';
 import type { CyclePreview, Run, StatKind } from './types';
 
-export function CyclePreviewPanel({ cycleId, preview, run, pending, cancel, applied }: { cycleId: string; preview: CyclePreview; run: Run; pending: boolean; cancel: () => void; applied: (id: string) => Promise<void> }) {
+export function CyclePreviewPanel({ cycleId, preview, run, pending, cancel, applied }: { cycleId: string; preview: CyclePreview; run: Run; pending: boolean; cancel: () => void; applied: (id: string) => void }) {
   const [page, setPage] = useState(0);
   const [backup, setBackup] = useState('');
   const changes = preview.changes ?? [];
@@ -24,7 +24,7 @@ export function CyclePreviewPanel({ cycleId, preview, run, pending, cancel, appl
     <div className="dialog-actions"><button disabled={pending} onClick={cancel}>{noChange ? '返回编辑' : '返回修改'}</button><button className="primary" disabled={pending || noChange} onClick={() => { void run(async () => {
       const result = await api<{ cycle_id: string; backup: string | null }>(`/cycles/${cycleId}/changes/${preview.preview_id}/apply`, 'POST');
       setBackup(result.backup ?? '');
-      await applied(result.cycle_id);
+      applied(result.cycle_id);
     }, copying ? '已复制并切换周期，旧装备未改变' : '数值表已保存，操作前已备份'); }}>{pending ? '正在保存…' : copying ? '确认复制并切换' : '确认保存并备份'}</button></div>
   </section>;
 }

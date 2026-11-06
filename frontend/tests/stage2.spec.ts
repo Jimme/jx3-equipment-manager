@@ -24,6 +24,9 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await dialog.getByRole('button', { name: '保存库存', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect((await state()).warehouse[0].quantity).toBe(2);
+  await expect(page.locator('.matrix .stock-cell').first()).toHaveText('测+ ×2');
+  await page.getByRole('link', { name: '共享仓库', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '共享仓库', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tabpanel').getByRole('button', { name: '给角色穿戴', exact: true }).click();
   await dialog.getByLabel('穿戴角色').selectOption(first.id);
   await dialog.getByText('附魔', { exact: true }).click();
@@ -97,7 +100,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await page.getByRole('button', { name: '取消修改数量', exact: true }).click();
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('已刷新');
-  await page.getByRole('button', { name: '操作记录', exact: true }).click();
+  await page.getByRole('tab', { name: '操作记录', exact: true }).click();
   await expect(page.getByRole('tabpanel').getByText('掉落转入仓库', { exact: true })).toBeVisible();
   await expect(page.getByRole('tabpanel').getByText('清空掉落', { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1080 });
