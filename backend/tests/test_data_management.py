@@ -48,7 +48,7 @@ def seed_worn(client, setup):
 def test_empty_and_seeded_export_round_trip_preserves_null_and_zero(client,setup,tmp_path):
     seed_worn(client,setup)
     payload=export(client)
-    assert payload['schema_revision']=='0007'
+    assert payload['schema_revision']=='0009'
     assert 'cycle_change_previews' not in payload['tables'] and 'mutation_receipts' in payload['tables']
     assert payload['tables']['equipment_templates'][0]['base_constitution_override']==0
     assert payload['tables']['character_slot_settings'][0]['refine_level'] is None
@@ -97,6 +97,8 @@ def test_raid_checks_are_independent_and_round_trip(client, setup, tmp_path):
 def test_previous_backup_formats_default_raid_checks_to_unchecked(client, setup, tmp_path):
     payload = export(client)
     payload['schema_revision'] = '0006'
+    for cycle in payload['tables']['equipment_cycles']:
+        cycle.pop('has_constitution_sockets')
     raid_fields = ('raid_10', 'raid_25pt', 'raid_25yx')
     for character in payload['tables']['characters']:
         for field in raid_fields:
@@ -106,6 +108,7 @@ def test_previous_backup_formats_default_raid_checks_to_unchecked(client, setup,
     path = tmp_path / 'old.sqlite3'
     path.write_bytes(client.get(f'/api/data/backups/{backup}').content)
     with sqlite3.connect(path) as connection:
+        connection.execute('ALTER TABLE equipment_cycles DROP COLUMN has_constitution_sockets')
         for field in raid_fields:
             connection.execute(f'ALTER TABLE characters DROP COLUMN {field}')
         connection.execute("UPDATE alembic_version SET version_num = '0006'")

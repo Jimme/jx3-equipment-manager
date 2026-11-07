@@ -12,7 +12,11 @@ def equipment_type(slot: str) -> str:
     return "ring" if slot in ("ring1", "ring2") else slot
 
 
-def compare(grade, socket, green, target, mode):
+def socket_applicable(kind, available=True):
+    return equipment_type(kind) != 'ring' and bool(available)
+
+
+def compare(grade, socket, green, target, mode, socket_required=True):
     if target is None:
         return {"status": "unset", "reasons": ["未设置目标"]}
     if grade is None:
@@ -21,7 +25,7 @@ def compare(grade, socket, green, target, mode):
         good = grade >= target
         return {"status": "met" if good else "gap", "reasons": [] if good else ["品级不足"]}
     reasons = []
-    if not socket:
+    if socket_required and not socket:
         reasons.append("同品级缺体质孔")
     if not green:
         reasons.append("同品级绿字未达标")
@@ -29,5 +33,5 @@ def compare(grade, socket, green, target, mode):
     return {"status": status, "reasons": reasons}
 
 
-def label(short_label, socket, green):
-    return f"{short_label}{'' if socket else '-'}{'+' if green else ''}"
+def label(short_label, socket, green, socket_required=True):
+    return f"{short_label}{'' if socket or not socket_required else '-'}{'+' if green else ''}"

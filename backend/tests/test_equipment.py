@@ -251,7 +251,7 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
         assert conn.exec_driver_sql('SELECT comparison_mode FROM game_accounts').scalar() == 'strict'
         assert conn.exec_driver_sql('SELECT version FROM character_equipment').scalar() == 3
         assert conn.exec_driver_sql('SELECT account_id FROM audit_events').scalar() == 'account'
-        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0007'
+        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0009'
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE game_accounts SET comparison_mode='combined'")
     with pytest.raises(IntegrityError), engine.begin() as conn:

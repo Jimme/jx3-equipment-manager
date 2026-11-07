@@ -1,6 +1,49 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+test('无孔周期与戒指录入跳过体质孔，切换周期保留旧装备规则', async ({ page, request }) => {
+  const cycle = await (await request.post('/api/cycles', { data: { name: '体质孔规则周期' } })).json();
+  const account = await (await request.post('/api/accounts', { data: { name: '体质孔规则账号' } })).json();
+  const character = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '体质孔规则角色' } })).json();
+  await request.patch(`/api/accounts/${account.id}/preferences`, { data: { target_grade: 1110, comparison_mode: 'combined' } });
+  await page.goto('/');
+  await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
+  await page.getByRole('button', { name: '周期与来源', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  const rule = dialog.getByLabel('本周期装备均无体质孔（戒指始终无孔）');
+  await page.route(`**/api/cycles/${cycle.id}`, route => route.fulfill({ status: 503, json: { detail: '测试规则保存失败' } }), { times: 1 });
+  await rule.click();
+  await expect(dialog.getByRole('alert')).toContainText('测试规则保存失败');
+  await expect(rule).not.toBeChecked();
+  await rule.check();
+  await expect(rule).toBeChecked();
+  await expect(dialog.getByRole('status')).toContainText('已更新周期体质孔规则');
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '体质孔规则角色 帽子', exact: true }).click();
+  await expect(dialog.getByRole('group', { name: '是否有体质孔' })).toHaveCount(0);
+  await expect(dialog.getByText('原周期无体质孔', { exact: true })).toBeVisible();
+  await dialog.getByLabel('来源预设').selectOption('manual');
+  await dialog.getByLabel('装备来源名称').fill('无孔测试');
+  await dialog.getByLabel('装备来源简称').fill('无');
+  await dialog.getByLabel('真实品级', { exact: true }).fill('1110');
+  await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
+  await dialog.getByRole('button', { name: '保存装备', exact: true }).click();
+  const cell = page.getByRole('button', { name: '体质孔规则角色 帽子', exact: true });
+  await expect(cell).toHaveAccessibleDescription(/完全达标/);
+  await expect(cell).toContainText('无+');
+  await page.getByRole('button', { name: '体质孔规则角色 戒指1', exact: true }).click();
+  await expect(dialog.getByText('戒指无体质孔', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '体质孔规则角色 养成与体质', exact: true }).click();
+  await expect(dialog.getByLabel('帽子五行石')).toHaveCount(0);
+  await expect(dialog.getByLabel('戒指1五行石')).toHaveCount(0);
+  await dialog.screenshot({ path: '../.tools/screenshots/no-socket-growth.png' });
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  const settings = await (await request.get(`/api/cycles/${cycle.id}/data`)).json();
+  expect(settings.cycle.has_constitution_sockets).toBe(false);
+  expect((await (await request.get(`/api/accounts/${account.id}/characters/${character.id}/growth`)).json()).equipment_total).toBeNull();
+});
+
 test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', async ({ page, request }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

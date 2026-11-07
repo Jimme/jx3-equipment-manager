@@ -24,6 +24,7 @@ class RaidCheckInput(Input):
 class CycleInput(Input):
     name: Name
     expected_version: Nonnegative | None = None
+    has_constitution_sockets: Annotated[bool, Field(strict=True)] | None = None
 
 
 class ActiveCycle(Input):
@@ -142,6 +143,46 @@ class InventoryAdd(MutationInput):
 class QuantityChange(MutationInput):
     expected_version: Nonnegative
     quantity: Nonnegative
+
+
+class InventoryEdit(InventoryAdd):
+    expected_version: Nonnegative
+
+
+class BatchEquipmentRow(Input):
+    slot: str
+    action: Literal['edit', 'new', 'warehouse', 'clear']
+    expected_version: Nonnegative
+    equipment: TemplateInput | None = None
+    choices: EquipmentChoices | None = None
+    warehouse_id: str | None = None
+    expected_stock_version: Nonnegative | None = None
+
+    @model_validator(mode='after')
+    def valid_action(self):
+        if self.action in ('edit', 'new'):
+            if self.equipment is None or self.warehouse_id is not None:
+                raise ValueError('手动录入或纠错必须提供装备')
+        elif self.action == 'warehouse':
+            if not self.warehouse_id or self.expected_stock_version is None or self.equipment is not None:
+                raise ValueError('仓库穿戴必须提供库存及其版本')
+        elif self.equipment is not None or self.warehouse_id is not None or self.choices is not None:
+            raise ValueError('清除穿戴不能包含新装备')
+        return self
+
+
+class BatchEquipmentInput(Input):
+    rows: Annotated[list[BatchEquipmentRow], Field(min_length=1, max_length=12)]
+
+    @model_validator(mode='after')
+    def unique_slots(self):
+        if len({row.slot for row in self.rows}) != len(self.rows):
+            raise ValueError('同一部位不能重复提交')
+        return self
+
+
+class BatchEquipmentApply(MutationInput):
+    preview_id: str
 
 
 class WarehouseEquip(MutationInput):

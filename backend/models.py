@@ -13,6 +13,7 @@ class Cycle(Base):
     archived: Mapped[bool] = mapped_column(default=False)
     version: Mapped[int] = mapped_column(Integer, default=0)
     copied_from_id: Mapped[str | None] = mapped_column(ForeignKey('equipment_cycles.id'))
+    has_constitution_sockets: Mapped[bool] = mapped_column(default=True)
 
 
 class Workspace(Base):
@@ -171,7 +172,7 @@ class RaidDrop(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String)
-    __table_args__ = (CheckConstraint("quantity BETWEEN 1 AND 2147483647", name="ck_drop_quantity"), CheckConstraint("version >= 0", name="ck_drop_version"))
+    __table_args__ = (UniqueConstraint("account_id", "config_id", name="uq_drop_account_config"), CheckConstraint("quantity BETWEEN 1 AND 2147483647", name="ck_drop_quantity"), CheckConstraint("version >= 0", name="ck_drop_version"))
 
 
 class RaidMemoState(Base):

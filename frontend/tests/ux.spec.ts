@@ -134,6 +134,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await dialog.getByText('更多信息', { exact: true }).click();
   await dialog.getByRole('button', { name: '保存库存', exact: true }).click();
   await expect(dialog.getByLabel('附魔名称', { exact: true })).toBeFocused();
+  page.once('dialog', prompt => prompt.accept());
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '缺口明细', exact: true }).click();
   await expect(page.getByLabel('只看仓库可改善')).toBeChecked();

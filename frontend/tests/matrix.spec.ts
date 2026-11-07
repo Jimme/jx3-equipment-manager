@@ -128,7 +128,9 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '测试角色2 帽子', exact: true }).click();
   await dialog.getByText('复制已有装备', { exact: true }).click();
-  const templateId = await dialog.getByLabel('从已有模板复制').locator('option').nth(1).getAttribute('value');
+  const copyOption = dialog.getByLabel('从已有模板复制').locator('option').filter({ hasText: '测试普通来源' }).first();
+  await expect(copyOption).toBeAttached();
+  const templateId = await copyOption.getAttribute('value');
   await dialog.getByLabel('从已有模板复制').selectOption(templateId!);
   await dialog.getByRole('button', { name: /^保存(装备|记录)$/ }).click();
   await expect(dialog).not.toBeVisible();
@@ -155,7 +157,8 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await dialog.getByLabel('装备来源名称').fill('手动测试来源');
   await dialog.getByLabel('装备来源简称').fill('手');
   await dialog.getByLabel('真实品级', { exact: true }).fill('1110');
-  await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
+  await expect(dialog.getByRole('group', { name: '是否有体质孔' })).toHaveCount(0);
+  await expect(dialog.getByText('戒指无体质孔', { exact: true })).toBeVisible();
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByText('更多信息', { exact: true }).click();
   await dialog.getByLabel('装备名称', { exact: true }).fill('手动测试戒指');

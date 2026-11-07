@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from .domain import SLOTS
+from .domain import socket_applicable, SLOTS
 from .models import (Account, Character, CharacterCalculation, Cycle, CycleBaseStat, CycleBuffThreshold,
                      CycleEnchantStat, CycleRainbowStat, CycleRefineStat, CycleStoneStat,
                      EquipmentConfig, SlotSetting, Template, Workspace, WornEquipment)
@@ -62,7 +62,7 @@ def load_growth_slots(session, character_ids):
         return []
     return session.execute(
         select(WornEquipment, SlotSetting, Template, EquipmentConfig,
-               Cycle.name.label('cycle_name'), CycleBaseStat.constitution.label('base'),
+               Cycle.name.label('cycle_name'), Cycle.has_constitution_sockets.label('socket_available'), CycleBaseStat.constitution.label('base'),
                CycleRefineStat.constitution.label('refine'), CycleStoneStat.constitution.label('stone'),
                CycleEnchantStat.constitution.label('enchant'), CycleRainbowStat.constitution.label('rainbow'))
         .select_from(WornEquipment)
@@ -131,7 +131,7 @@ def growth_report_for(character, cycle, thresholds, signature, calculation, reco
             override = template.base_constitution_override
             parts = {'base': component(row.base if override is None else override, '原周期默认' if override is None else '单件覆盖')}
             parts['refine'] = component(row.refine, '精炼等级未录入' if setting.refine_level is None else f'原周期 {template.actual_grade}品 / 精炼{setting.refine_level}')
-            if not template.has_constitution_socket:
+            if not socket_applicable(template.equipment_type, row.socket_available) or not template.has_constitution_socket:
                 parts['stone'] = component(applicable=False, source='装备无体质孔，等级配置仍保留')
             elif setting.stone_state == 'none':
                 parts['stone'] = component(0, '明确未镶嵌')
@@ -147,6 +147,7 @@ def growth_report_for(character, cycle, thresholds, signature, calculation, reco
                 elif part['status'] == 'known':
                     known += part['value']
         rows.append({'slot': slot, 'name': name, 'settings': dump(setting), 'equipped': template is not None,
+                     'socket_applicable': socket_applicable(slot, row.socket_available if template else cycle.has_constitution_sockets if cycle else True),
                      'grade': template.actual_grade if template else None,
                      'cycle_name': row.cycle_name,
                      'components': parts})

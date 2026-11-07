@@ -98,6 +98,23 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
       <details className="cycle-management menu-disclosure"><summary>管理周期</summary><div className="button-row">{!cycle.archived && <button disabled={disabled || sourceDirty} title={sourceDirty?'先保存或取消来源编辑':undefined} onClick={()=>{setName(cycle.name);setForm('rename');}}>修改周期名称</button>}<button disabled={disabled || dirty || sourceDirty || current} title={current?'当前使用的周期不能归档':undefined} onClick={()=>void run(()=>api(`/cycles/${cycleId}/archive`,'PUT',{expected_version:cycle.version,archived:!cycle.archived}),cycle.archived?'已恢复周期':'已归档周期')}>{cycle.archived?'恢复周期':'归档周期'}</button><button className="danger" disabled={disabled || unsaved} onClick={removeCycle}>删除空周期</button><button disabled={disabled} onClick={()=>void reloadConfig()}>重新读取</button></div></details>
     </div>}
     </div>
+    {cycle && !form && <label className="check"><input type="checkbox" checked={!cycle.has_constitution_sockets} disabled={disabled || cycle.archived || unsaved} onChange={e => {
+      const noSockets = e.target.checked;
+      let committed = false;
+      setConfig(previous => previous ? { ...previous, cycle: { ...previous.cycle, has_constitution_sockets: !noSockets } } : previous);
+      void run(async () => {
+          const impact = await api<{version: number; worn: number; warehouse: number; drops: number}>(`/cycles/${cycle.id}/socket-impact`);
+          if (impact.version !== cycle.version) throw new Error('周期已变化，请重新读取后核对');
+          if (impact.worn + impact.warehouse + impact.drops > 0 && !window.confirm(`该规则影响本周期所有账号的非戒指装备：穿戴 ${impact.worn} 件、仓库 ${impact.warehouse} 件、掉落 ${impact.drops} 件。比较和体质计算将重新判断；原五行石等级保留。确认修改？`)) {
+            setConfig(previous => previous ? { ...previous, cycle } : previous);
+            return;
+          }
+        await api(`/cycles/${cycle.id}`, 'PUT', { name: cycle.name, expected_version: cycle.version, has_constitution_sockets: !noSockets });
+        committed = true;
+      }, '已更新周期体质孔规则').then(saved => {
+        if (!saved && !committed) setConfig(previous => previous?.cycle.id === cycle.id ? { ...previous, cycle: { ...previous.cycle, has_constitution_sockets: cycle.has_constitution_sockets } } : previous);
+      });
+    }}/>本周期装备均无体质孔（戒指始终无孔）</label>}
     {loadError && <p role="alert" className="message error">{loadError}<button disabled={disabled} onClick={()=>void read(cycleId)}>重试读取</button></p>}
     {loading && <p role="status" className="hint">正在读取周期配置…</p>}
     {form && !copyPreview && <form className="inline-form" onSubmit={e=>{e.preventDefault();void run(async()=>{

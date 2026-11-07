@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session
 
 from .database import ROOT, get_data_dir, make_engine, migrate
 from .domain import SLOT_KEYS, SLOTS, compare, equipment_type, label
-from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle, CycleBaseStat, SlotSetting, Source, Template, Workspace, WornEquipment
+from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle, CycleBaseStat, EquipmentConfig, RaidDrop, SlotSetting, Source, Template, WarehouseStack, Workspace, WornEquipment
 from .services import BASE_STAT_MATCH, new_id, dump, require, audit, create_template, create_config, choices_for, template_snapshot
 from .inventory import make_inventory_router
+from .equipment_batch import make_batch_router
 from .cycle_data import make_cycle_data_router
 from .growth import make_growth_router, growth_reports, load_growth_slots
 from .data_management import make_data_router
@@ -32,7 +33,7 @@ def create_app(data_dir: Path | None = None):
         yield
         engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.9", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.10", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -54,7 +55,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.9"}
+        return {"status": "ok", "version": "0.1.10"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -79,7 +80,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.post("/api/cycles", status_code=201)
     def add_cycle(payload: CycleInput, session: Session = DB):
-        cycle = Cycle(id=new_id(), name=payload.name, archived=False)
+        cycle = Cycle(id=new_id(), name=payload.name, archived=False, has_constitution_sockets=payload.has_constitution_sockets if payload.has_constitution_sockets is not None else True)
         session.add(cycle)
         session.flush()
         workspace = session.get(Workspace, 1)
@@ -97,6 +98,8 @@ def create_app(data_dir: Path | None = None):
             raise HTTPException(409, '周期配置已变化，请重新读取后编辑')
         before = dump(cycle)
         cycle.name = payload.name
+        if payload.has_constitution_sockets is not None:
+            cycle.has_constitution_sockets = payload.has_constitution_sockets
         cycle.version += 1
         audit(session, "rename_cycle", cycle.id, before, dump(cycle))
         session.commit()
@@ -243,11 +246,15 @@ def create_app(data_dir: Path | None = None):
         return {'deleted': True}
 
     @app.get("/api/templates")
-    def templates(equipment_type: str | None = None, session: Session = DB):
-        query = select(Template, CycleBaseStat.constitution).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
+    def templates(equipment_type: str | None = None, include_history: bool = True, session: Session = DB):
+        query = select(Template, CycleBaseStat.constitution, Cycle.has_constitution_sockets).join(Cycle, Cycle.id == Template.cycle_origin_id).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
         if equipment_type:
             query = query.where(Template.equipment_type == equipment_type)
-        return [template_snapshot(template, base) for template, base in session.execute(
+        if not include_history:
+            held = select(WornEquipment.config_id).where(WornEquipment.config_id.is_not(None)).union(
+                select(WarehouseStack.config_id).where(WarehouseStack.quantity > 0), select(RaidDrop.config_id))
+            query = query.where(Template.id.in_(select(EquipmentConfig.template_id).where(EquipmentConfig.id.in_(held))))
+        return [template_snapshot(template, base, available) for template, base, available in session.execute(
             query.order_by(Template.actual_grade.desc(), Template.id))]
 
     @app.post("/api/templates", status_code=201)
@@ -269,15 +276,15 @@ def create_app(data_dir: Path | None = None):
         cells = {}
         for row in records:
             worn, template, config = row.WornEquipment, row.Template, row.EquipmentConfig
-            equipment = template_snapshot(template, row.base) if template else None
+            equipment = template_snapshot(template, row.base, row.socket_available) if template else None
             comparison = compare(template.actual_grade if template else None,
                                  template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False,
-                                 account.target_grade, account.comparison_mode)
+                                 account.target_grade, account.comparison_mode, equipment['socket_applicable'] if equipment else True)
             cells.setdefault(worn.character_id, {})[worn.slot] = {
                 "equipment": equipment, "version": worn.version, **comparison,
                 "choices": choices_for(config) if config else None,
-                "label": label(template.short_label, template.has_constitution_socket, template.green_stats_ok) if template else "未装备",
+                "label": label(template.short_label, template.has_constitution_socket, template.green_stats_ok, equipment['socket_applicable']) if template else "未装备",
             }
         reports = growth_reports(session, characters, records)
         result = {"account": dump(account), "characters": [dump(c) for c in characters], "cells": cells, "growth": {character_id: {key: report[key] for key in ("known_subtotal", "equipment_total", "verified_total", "buffs")} for character_id, report in reports.items()},
@@ -322,6 +329,7 @@ def create_app(data_dir: Path | None = None):
         return save_worn(session, account_id, worn, None, expected_version)
 
     app.include_router(make_inventory_router(engine, database))
+    app.include_router(make_batch_router(engine))
     app.include_router(make_cycle_data_router(engine, database))
     app.include_router(make_growth_router(engine, database))
     app.include_router(make_data_router(engine, database))

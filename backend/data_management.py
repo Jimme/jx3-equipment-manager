@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .cycle_data import SPECS, validate_rows
 from .database import backup_database, make_engine, migrate
 from .domain import SLOT_KEYS, equipment_type
+from .drop_merge import merge_drop_rows
 from .models import Base, DataChangePreview
 from .schemas import AccountPreferences, AttachmentChoice, DataApplyInput, NamedInput, SourceInput, TemplateInput
 from .services import audit, new_id, require
@@ -29,7 +30,7 @@ TRANSIENT = {'cycle_change_previews', 'data_change_previews'}
 TABLES = [table for table in Base.metadata.sorted_tables if table.name not in TRANSIENT]
 TABLE_MAP = {table.name: table for table in TABLES}
 FORMAT = 'jx3-equipment-workspace'
-REVISION = '0007'
+REVISION = '0009'
 RAID_COLUMNS = {'raid_10', 'raid_25pt', 'raid_25yx'}
 
 
@@ -230,11 +231,19 @@ def fill_tables(session, tables):
 def validate_document(payload, directory):
     if not isinstance(payload, dict) or set(payload) != {'format', 'format_version', 'schema_revision', 'exported_at', 'tables'}:
         reject('不是完整的工作空间 JSON 文件')
-    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', REVISION):
+    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', '0007', '0008', REVISION):
         reject('文件版本不兼容，请使用当前版本导出文件；旧数据库备份请按停机恢复说明处理')
     if not isinstance(payload['exported_at'], str):
         reject('导出时间格式无效')
     tables = payload['tables']
+    if payload['schema_revision'] in ('0006', '0007') and isinstance(tables, dict) and isinstance(tables.get('equipment_cycles'), list):
+        old_columns = {column.name for column in TABLE_MAP['equipment_cycles'].columns} - {'has_constitution_sockets'}
+        cycles = []
+        for row in tables['equipment_cycles']:
+            if not isinstance(row, dict) or set(row) != old_columns:
+                reject('旧版周期数据字段不匹配')
+            cycles.append({**row, 'has_constitution_sockets': True})
+        tables = {**tables, 'equipment_cycles': cycles}
     if payload['schema_revision'] == '0006' and isinstance(tables, dict) and isinstance(tables.get('characters'), list):
         old_columns = {column.name for column in TABLE_MAP['characters'].columns} - RAID_COLUMNS
         characters = []
@@ -245,6 +254,25 @@ def validate_document(payload, directory):
         tables = {**tables, 'characters': characters}
     validate_types(tables)
     validate_business(tables)
+    if payload['schema_revision'] != REVISION:
+        try:
+            merged, changes = merge_drop_rows(tables['raid_drop_notes'])
+        except ValueError as error:
+            reject(str(error))
+        if changes:
+            tables = copy.deepcopy(tables)
+            tables['raid_drop_notes'] = merged
+            for before, after in changes:
+                state = next((row for row in tables['raid_memo_states'] if row['account_id'] == after['account_id']), None)
+                if state:
+                    state['version'] += 1
+                else:
+                    tables['raid_memo_states'].append({'account_id': after['account_id'], 'version': 1})
+                tables['audit_events'].append({
+                    'id': new_id(), 'created_at': now().isoformat(), 'account_id': after['account_id'],
+                    'operation': 'drop_merge_migration', 'entity_id': after['id'],
+                    'snapshots': json.dumps({'before': before, 'after': after, 'summary': '导入时归并相同配置掉落，数量保持一致'}, ensure_ascii=False),
+                })
     with tempfile.TemporaryDirectory(prefix='jx3-validate-') as temporary:
         engine = make_engine(Path(temporary))
         try:
@@ -284,7 +312,7 @@ def sqlite_document(raw, directory):
                 if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                     reject('备份完整性检查失败')
                 revisions = connection.execute('SELECT version_num FROM alembic_version').fetchall()
-                if revisions not in ([(REVISION,)], [('0006',)]):
+                if revisions not in ([(REVISION,)], [('0008',)], [('0007',)], [('0006',)]):
                     reject('此备份不属于当前数据库版本，请按停机恢复说明使用匹配版本再升级')
                 objects = connection.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','trigger')").fetchall()
                 expected = set(Base.metadata.tables) | {'alembic_version'}
@@ -293,6 +321,8 @@ def sqlite_document(raw, directory):
                 tables = {}
                 for table in TABLES:
                     columns = [c for c in table.columns if not (revisions == [('0006',)] and table.name == 'characters' and c.name in RAID_COLUMNS)]
+                    if revisions in ([('0006',)], [('0007',)]) and table.name == 'equipment_cycles':
+                        columns = [c for c in columns if c.name != 'has_constitution_sockets']
                     if {r[1] for r in connection.execute(f'PRAGMA table_info("{table.name}")')} != {c.name for c in columns}:
                         reject('备份字段与当前版本不一致')
                     values = connection.execute('SELECT ' + ','.join('"'+c.name+'"' for c in columns) + ' FROM "'+table.name+'"').fetchall()
@@ -430,6 +460,8 @@ def make_data_router(engine, read_database):
         if not payload.confirm_replace:
             raise HTTPException(422, '请先确认整体替换当前工作空间')
         token = require(session, DataChangePreview, preview_id)
+        if token.kind not in ('import', 'restore'):
+            raise HTTPException(404, '工作空间替换预览不存在')
         if token.result_json:
             return json.loads(token.result_json)
         if now() - datetime.fromisoformat(token.created_at) > timedelta(minutes=30):

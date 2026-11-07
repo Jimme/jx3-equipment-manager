@@ -1,12 +1,13 @@
 export type Account = { id: string; name: string; sort_order: number; archived: boolean; target_grade: number | null; comparison_mode: 'strict' | 'grade' | 'combined' };
 export type RaidDifficulty = '10' | '25pt' | '25yx';
 export type Character = { id: string; account_id: string; name: string; sort_order: number; archived: boolean } & Record<`raid_${RaidDifficulty}`, boolean>;
-export type Cycle = { id: string; name: string; archived: boolean; version: number; copied_from_id: string | null };
+export type Cycle = { id: string; name: string; archived: boolean; version: number; copied_from_id: string | null; has_constitution_sockets: boolean };
 export type Source = { id: string; cycle_id: string; source_type: string; name: string; short_label: string; default_grade: number | null };
 export type Template = {
   id: string; cycle_origin_id: string; source_id: string | null; source_type: string;
   source_name: string; short_label: string; equipment_type: string; actual_grade: number;
   has_constitution_socket: boolean; green_stats_ok: boolean;
+  socket_applicable?: boolean;
   base_constitution_override: number | null; name: string; note: string;
   base_stat?: { value: number | null; status: 'known' | 'unknown'; source: 'cycle' | 'override' };
 };
@@ -35,7 +36,7 @@ export type GrowthComponent = { value: number | null; status: 'known' | 'unknown
 export type GrowthSummary = { known_subtotal: number; equipment_total: number | null; verified_total: number | null; buffs: { skill: string; stacks: number | null; next_stacks: number | null; next_threshold: number | null; difference: number | null; configured_max: number; message: string }[] };
 export type GrowthReport = GrowthSummary & {
   character: Character; cycle: Cycle | null;
-  slots: { slot: string; name: string; equipped: boolean; grade: number | null; cycle_name: string | null;
+  slots: { slot: string; name: string; equipped: boolean; grade: number | null; cycle_name: string | null; socket_applicable: boolean;
     settings: { refine_level: number | null; stone_state: 'unknown' | 'none' | 'set'; stone_level: number | null; version: number };
     components: Record<'base'|'refine'|'stone'|'enchant'|'rainbow', GrowthComponent> }[];
   calculation: { additional_constitution: number | null; scope_confirmed: boolean; confirmation_valid: boolean; version: number };

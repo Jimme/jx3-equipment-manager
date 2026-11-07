@@ -1,6 +1,6 @@
 import { requestId as newRequestId } from './requestId';
-import { useEffect, useMemo, useState } from 'react';
-import { api, optionalInteger } from './api';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { api, isMutationUncertain, optionalInteger } from './api';
 import { choiceSummary } from './ChoicesFields';
 import { WarehouseEquip } from './WarehouseEquip';
 import { InventoryQuantity } from './InventoryQuantity';
@@ -10,7 +10,7 @@ import type { Data, HistoryItem, InventoryItem, Run } from './types';
 
 export type StockTarget = 'warehouse' | 'drops';
 export type InventorySelection = { tab: StockTarget | 'gaps' | 'history'; equipmentType?: string };
-export type InventoryDialog = ({ kind: 'add'; target: StockTarget; equipmentType?: string } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
+export type InventoryDialog = ({ kind: 'add'; target: StockTarget; equipmentType?: string } | { kind: 'edit'; target: StockTarget; item: InventoryItem } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
 
 function equipmentName(data: Data, type: string) {
   return type === 'ring' ? '戒指' : data.workspace.slots.find(s => s.key === type)?.name ?? type;
@@ -28,12 +28,27 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyError, setHistoryError] = useState('');
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const daily = data.daily!;
   const path = `/accounts/${data.accountId}`;
   useEffect(() => {
     if (characterFilter && !data.matrix!.characters.some(c => c.id === characterFilter)) setCharacterFilter('');
   }, [data.matrix, characterFilter]);
-  const close = () => { if (!pending) setDialog(null); };
+  const dismiss = () => { setDirty(false); setDialog(null); };
+  const close = () => {
+    if (pending) return;
+    if (dialog && isMutationUncertain(dialog.requestId)) {
+      window.alert('这笔操作的结果尚未核对，请先原样重试保存，避免重新录入时重复增加数量。'); return;
+    }
+    if (dirty && !window.confirm('本次装备输入还没保存，关闭会丢弃。确定关闭？')) return;
+    dismiss();
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', protect);
+    return () => window.removeEventListener('beforeunload', protect);
+  }, [dirty]);
   useEffect(() => {
     let active = true;
     if (tab === 'history') {
@@ -53,7 +68,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
     (!characterFilter || gap.character_id === characterFilter) && (!improvementsOnly || gap.candidate_ids.length > 0)
   ) : [], [tab, daily.gaps, characterFilter, improvementsOnly]);
   const stockTitle = stockTab === 'warehouse' ? '共享仓库' : '团本掉落';
-  const modalTitle = dialog?.kind === 'add' ? (dialog.target === 'warehouse' ? '添加共享库存' : '记录团本掉落') + (dialog.equipmentType ? ` · ${equipmentName(data, dialog.equipmentType)}` : '') : dialog?.kind === 'equip' ? '从仓库给角色穿戴' : '确认获得并转入仓库';
+  const modalTitle = dialog?.kind === 'add' ? (dialog.target === 'warehouse' ? '添加共享库存' : '记录团本掉落') + (dialog.equipmentType ? ` · ${equipmentName(data, dialog.equipmentType)}` : '') : dialog?.kind === 'edit' ? `更正${dialog.target === 'warehouse' ? '库存' : '掉落'} · ${equipmentName(data, dialog.item.equipment.equipment_type)}` : dialog?.kind === 'equip' ? '从仓库给角色穿戴' : '确认获得并转入仓库';
 
   return <section id="inventory" className="daily-section" aria-label="账号仓库与团本掉落">
     <div className="daily-heading">
@@ -74,6 +89,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
           </td>
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
           <td><div className="button-row">
+            <button disabled={pending} onClick={() => setDialog({ kind: 'edit', target: stockTab!, item, requestId: newRequestId() })}>编辑</button>
             {tab === 'warehouse' ? <button disabled={pending || !data.matrix!.characters.length} onClick={() => equip(item)}>给角色穿戴</button> : <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入仓库</button>}
             <button className="danger" disabled={pending} onClick={() => {
               const label = tab === 'warehouse' ? '库存' : '掉落';
@@ -101,26 +117,63 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
       {tab === 'history' && <>{historyError && <p role="alert" className="message error">{historyError}</p>}{historyLoading ? <p className="small-empty">正在读取操作记录…</p> : history.length === 0 ? <p className="small-empty">还没有装备、仓库或掉落操作记录。</p> : <ol className="history-list">{history.map(item => <li key={item.id}><div><strong>{item.title}</strong><time>{new Date(item.created_at).toLocaleString('zh-CN')}</time></div><p>{item.summary}</p></li>)}</ol>}</>}
     </div>
     {dialog && <Modal title={modalTitle} close={close} busy={pending} compact>{error && <p role="alert" className="message error">{error}</p>}
-      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
-      {dialog.kind === 'equip' && <WarehouseEquip key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} initialCharacter={dialog.characterId} initialSlot={dialog.slot} fixedTarget={!!dialog.characterId && !!dialog.slot} run={run} pending={pending} close={close}/>}
-      {dialog.kind === 'transfer' && <DropTransfer key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close}/>}
+      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
+      {dialog.kind === 'edit' && <EditInventory key={dialog.requestId} data={data} target={dialog.target} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty} actions={<button type="button" disabled={pending || (dialog.target === 'warehouse' && !data.matrix!.characters.length)} onClick={() => {
+        if (isMutationUncertain(dialog.requestId)) { window.alert('请先原样重试保存，核对上一笔结果后再切换操作。'); return; }
+        if (dirty && !window.confirm('切换操作会丢弃当前更正输入，确定继续？')) return;
+        setDirty(false);
+        setDialog({ kind: dialog.target === 'warehouse' ? 'equip' : 'transfer', item: dialog.item, requestId: newRequestId() });
+      }}>{dialog.target === 'warehouse' ? '给角色穿戴' : '转入仓库'}</button>}/>}
+      {dialog.kind === 'equip' && <WarehouseEquip key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} initialCharacter={dialog.characterId} initialSlot={dialog.slot} fixedTarget={!!dialog.characterId && !!dialog.slot} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
+      {dialog.kind === 'transfer' && <DropTransfer key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
     </Modal>}
   </section>;
 }
 
-type ActionProps = { data: Data; run: Run; pending: boolean; close: () => void; requestId: string };
+type ActionProps = { data: Data; run: Run; pending: boolean; close: () => void; savedClose: () => void; onDirty: (dirty: boolean) => void; requestId: string };
 
-function AddInventory({ data, target, equipmentType, requestId, run, pending, close }: ActionProps & { target: StockTarget; equipmentType?: string }) {
+function AddInventory({ data, target, equipmentType, requestId, run, pending, close, savedClose, onDirty }: ActionProps & { target: StockTarget; equipmentType?: string }) {
   const [type, setType] = useState(equipmentType ?? 'hat');
   const [quantity, setQuantity] = useState('1');
-  return <EquipmentForm data={data} type={type} run={run} pending={pending} close={close} submitLabel={target === 'warehouse' ? '保存库存' : '保存掉落'} success={target === 'warehouse' ? '已添加共享库存' : '已记录掉落'}
-    leadingFields={<div className="form-grid">{!equipmentType && <label>装备部位<select aria-label="库存装备部位" value={type} onChange={e => setType(e.target.value)}>{data.workspace.slots.filter(s => s.key !== 'ring2').map(s => <option key={s.key} value={s.key === 'ring1' ? 'ring' : s.key}>{s.key === 'ring1' ? '戒指（两格通用）' : s.name}</option>)}</select></label>}<label>数量<input aria-label="录入数量" type="number" min="1" max="2147483647" required value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div>}
+  const [specificDirty, setSpecificDirty] = useState(false);
+  return <EquipmentForm data={data} type={type} run={run} pending={pending} close={close} savedClose={savedClose} onDirty={onDirty} onSpecificDirty={setSpecificDirty} extraDirty={quantity !== '1' || type !== (equipmentType ?? 'hat')} submitLabel={target === 'warehouse' ? '保存库存' : '保存掉落'} success={target === 'warehouse' ? '已添加共享库存' : '已记录掉落'}
+    leadingFields={<div className="form-grid">{!equipmentType && <label>装备部位<select aria-label="库存装备部位" value={type} onChange={e => {
+      if (specificDirty && !window.confirm('更换部位会清除本次部位专属属性和附加配置，来源与品级会保留。确定继续？')) return;
+      setType(e.target.value);
+    }}>{data.workspace.slots.filter(s => s.key !== 'ring2').map(s => <option key={s.key} value={s.key === 'ring1' ? 'ring' : s.key}>{s.key === 'ring1' ? '戒指（两格通用）' : s.name}</option>)}</select></label>}<label>数量<input aria-label="录入数量" type="number" min="1" max="2147483647" required value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div>}
     onSave={(equipment, choices) => api(`/accounts/${data.accountId}/${target}`, 'POST', { request_id: requestId, equipment, choices, quantity: optionalInteger(quantity) })}/>;
 }
 
-function DropTransfer({ data, item, requestId, run, pending, close }: ActionProps & { item: InventoryItem }) {
+function EditInventory({ data, target, item, requestId, run, pending, close, savedClose, onDirty, actions }: ActionProps & { target: StockTarget; item: InventoryItem; actions: ReactNode }) {
+  const [quantity, setQuantity] = useState(String(item.quantity));
+  const [baseline, setBaseline] = useState(item);
+  const [latest, setLatest] = useState<InventoryItem | null>(null);
+  return <EquipmentForm data={data} type={item.equipment.equipment_type} current={item.equipment} initialChoices={item.choices}
+    allowCopy={false} run={run} pending={pending} close={close} savedClose={savedClose} onDirty={onDirty}
+    extraDirty={quantity !== String(item.quantity)} submitLabel="保存更正" success="装备配置已更正"
+    leadingFields={<>
+      <div className="equipment-copy"><span>此配置共 {baseline.quantity} 件</span><button type="button" disabled={pending} onClick={() => void run(async () => {
+        const fresh = await api<{ warehouse: InventoryItem[]; drops: InventoryItem[] }>(`/accounts/${data.accountId}/daily?skip_unconfigured_gaps=true`);
+        const found = fresh[target].find(row => row.id === baseline.id);
+        if (!found || !found.quantity) throw new Error('此记录已移除，请保留输入并返回核对最新列表');
+        setLatest(found);
+      }, '', undefined, false)}>读取最新记录核对</button></div>
+      {latest && <div className="replacement-note">最新记录为 {latest.label} · {latest.equipment.actual_grade} 品 · {latest.quantity} 件，{choiceSummary(latest.choices, latest.equipment.equipment_type === 'weapon')}。本次输入保留。
+        <button type="button" disabled={pending} onClick={() => { setBaseline(latest); setLatest(null); }}>以此版本继续更正</button>
+      </div>}
+      <label>本次更正件数<input aria-label="本次更正件数" required type="number" min="1" max={baseline.quantity} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>
+      <p className="hint">默认更正全部数量；指定较少件数时，余量保留原配置。</p>
+    </>}
+    actions={actions}
+    onSave={(equipment, choices) => api(`/accounts/${data.accountId}/${target}/${baseline.id}/edit`, 'POST', {
+      request_id: requestId, expected_version: baseline.version, quantity: optionalInteger(quantity), equipment, choices,
+    })}/>;
+}
+
+function DropTransfer({ data, item, requestId, run, pending, close, savedClose, onDirty }: ActionProps & { item: InventoryItem }) {
   const [quantity, setQuantity] = useState('1');
-  return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${data.accountId}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: item.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', close); }}><fieldset disabled={pending}>
+  useEffect(() => { onDirty(quantity !== '1'); return () => onDirty(false); }, [quantity, onDirty]);
+  return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${data.accountId}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: item.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', savedClose); }}><fieldset disabled={pending}>
     <p className="hint">{equipmentName(data, item.equipment.equipment_type)} · {item.label} · {item.equipment.actual_grade} 品，本次记录 {item.quantity} 件。</p>
     {item.quantity > 1 && <label>实际获得的数量<input aria-label="实际获得的数量" required type="number" min="1" max={item.quantity} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>}
     <p className="replacement-note">确认这件装备已分配给自己、仍可共享。对应数量会从备忘中移除。</p>

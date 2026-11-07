@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .domain import SLOTS, compare, equipment_type, label
-from .models import AuditEvent, Character, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
-from .schemas import DropClear, DropTransfer, EquipmentChoices, InventoryAdd, QuantityChange, WarehouseEquip
+from .domain import socket_applicable, SLOTS, compare, equipment_type, label
+from .models import AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
+from .schemas import DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseEquip
 from .services import (BASE_STAT_MATCH, active_account, choices_for, create_config, create_template, dump,
                        new_id, replace_worn, require, template_snapshot, template_view, writable_slot)
 
@@ -23,13 +23,14 @@ def describe_item(session, row):
 
 def item_view(row, config, equipment):
     return {**dump(row), 'equipment': equipment, 'choices': choices_for(config),
-            'label': label(equipment['short_label'], equipment['has_constitution_socket'], equipment['green_stats_ok'])}
+            'label': label(equipment['short_label'], equipment['has_constitution_socket'], equipment['green_stats_ok'], equipment['socket_applicable'])}
 
 
 def inventory_rows(model):
-    return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution).select_from(model)
+    return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution, Cycle.has_constitution_sockets).select_from(model)
             .join(EquipmentConfig, EquipmentConfig.id == model.config_id)
             .join(Template, Template.id == EquipmentConfig.template_id)
+            .join(Cycle, Cycle.id == Template.cycle_origin_id)
             .outerjoin(CycleBaseStat, BASE_STAT_MATCH))
 
 
@@ -67,6 +68,21 @@ def add_stock(session, account_id, config_id, quantity):
     stack.version += 1
     session.flush()
     return stack, before
+
+
+def add_drop(session, account_id, config_id, quantity):
+    note = session.scalar(select(RaidDrop).where(RaidDrop.account_id == account_id, RaidDrop.config_id == config_id))
+    if note is None:
+        note = RaidDrop(id=new_id(), account_id=account_id, config_id=config_id, quantity=quantity,
+                        version=0, created_at=datetime.now(timezone.utc).isoformat())
+        session.add(note)
+    else:
+        if note.quantity + quantity > 2147483647:
+            raise HTTPException(422, '掉落合计数量超出可记录范围')
+        note.quantity += quantity
+        note.version += 1
+    session.flush()
+    return note
 
 
 def start_operation(session, account_id, operation, payload):
@@ -107,9 +123,9 @@ def make_inventory_router(engine, read_database):
     @router.get('/daily')
     def daily(account_id: str, skip_unconfigured_gaps: bool = False, session: Session = DB):
         account = active_account(session, account_id)
-        warehouse = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
+        warehouse = [item_view(row, config, template_snapshot(template, base, available)) for row, config, template, base, available in session.execute(
             inventory_rows(WarehouseStack).where(WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id))]
-        drops = [item_view(row, config, template_snapshot(template, base)) for row, config, template, base in session.execute(
+        drops = [item_view(row, config, template_snapshot(template, base, available)) for row, config, template, base, available in session.execute(
             inventory_rows(RaidDrop).where(RaidDrop.account_id == account_id).order_by(RaidDrop.created_at, RaidDrop.id))]
         state = session.get(RaidMemoState, account_id)
         gaps = []
@@ -117,11 +133,12 @@ def make_inventory_router(engine, read_database):
         if skip_unconfigured_gaps and account.target_grade is None:
             return result
         characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
-        worn = {(row.character_id, row.slot): (row, template) for row, template in session.execute(
-            select(WornEquipment, Template).select_from(WornEquipment)
+        worn = {(row.character_id, row.slot): (row, template, available) for row, template, available in session.execute(
+            select(WornEquipment, Template, Cycle.has_constitution_sockets).select_from(WornEquipment)
             .join(Character, Character.id == WornEquipment.character_id)
             .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
             .outerjoin(Template, Template.id == EquipmentConfig.template_id)
+            .outerjoin(Cycle, Cycle.id == Template.cycle_origin_id)
             .where(Character.account_id == account_id, Character.archived.is_(False)))}
 
         def rank(grade, socket=False, green=False):
@@ -131,20 +148,21 @@ def make_inventory_router(engine, read_database):
         for item in warehouse:
             equipment = item['equipment']
             candidates_by_type[equipment['equipment_type']].append((
-                item['id'], rank(equipment['actual_grade'], equipment['has_constitution_socket'], equipment['green_stats_ok']),
+                item['id'], rank(equipment['actual_grade'], equipment['has_constitution_socket'] or not equipment['socket_applicable'], equipment['green_stats_ok']),
             ))
 
         for character in characters:
             for slot, slot_name in SLOTS:
-                record, template = worn[(character.id, slot)]
+                record, template, available = worn[(character.id, slot)]
+                applicable = socket_applicable(slot, available)
                 comparison = compare(template.actual_grade if template else None, template.has_constitution_socket if template else False,
-                                 template.green_stats_ok if template else False, account.target_grade, account.comparison_mode)
+                                 template.green_stats_ok if template else False, account.target_grade, account.comparison_mode, applicable)
                 if comparison['status'] == 'met':
                     continue
-                current_rank = rank(template.actual_grade, template.has_constitution_socket, template.green_stats_ok) if template else rank(-1)
+                current_rank = rank(template.actual_grade, template.has_constitution_socket or not applicable, template.green_stats_ok) if template else rank(-1)
                 candidates = [item_id for item_id, candidate_rank in candidates_by_type[equipment_type(slot)] if candidate_rank > current_rank]
                 gaps.append({'character_id': character.id, 'character_name': character.name, 'slot': slot, 'slot_name': slot_name,
-                             'current_label': label(template.short_label, template.has_constitution_socket, template.green_stats_ok) if template else '未装备',
+                             'current_label': label(template.short_label, template.has_constitution_socket, template.green_stats_ok, applicable) if template else '未装备',
                              'actual_grade': template.actual_grade if template else None, 'expected_version': record.version,
                              'target_grade': account.target_grade, **comparison, 'candidate_ids': candidates})
         return result
@@ -174,6 +192,43 @@ def make_inventory_router(engine, read_database):
         item = describe_item(session, stack)
         return finish_operation(session, account_id, 'warehouse_quantity', stack.id, payload, fingerprint, before, dump(stack),
                                 f"{item['label']} · {item['equipment']['actual_grade']}品：仓库 {before['quantity']} → {stack.quantity} 件", item)
+
+    @router.post('/{target}/{item_id}/edit')
+    def edit_inventory(account_id: str, target: str, item_id: str, payload: InventoryEdit, session: Session = WRITE):
+        if target not in ('warehouse', 'drops'):
+            raise HTTPException(404, '记录不存在')
+        fingerprint, replay = start_operation(session, account_id, f'{target}_edit:{item_id}', payload)
+        if replay is not None:
+            return replay
+        model = WarehouseStack if target == 'warehouse' else RaidDrop
+        item = owned(session, model, account_id, item_id)
+        check_version(item.version, payload.expected_version)
+        if payload.quantity > item.quantity or item.quantity < 1:
+            raise HTTPException(409, '更正件数超过当前数量，请核对最新记录')
+        before = dump(item)
+        template = create_template(session, payload.equipment)
+        config = create_config(session, template, payload.choices)
+        if config.id == item.config_id:
+            result = describe_item(session, item)
+            session.add(MutationReceipt(account_id=account_id, request_id=payload.request_id,
+                                        fingerprint=fingerprint, result=json.dumps(result, ensure_ascii=False)))
+            session.commit()
+            return result
+        item.quantity -= payload.quantity
+        item.version += 1
+        if target == 'drops' and not item.quantity:
+            session.delete(item)
+        session.flush()
+        if target == 'warehouse':
+            changed, _ = add_stock(session, account_id, config.id, payload.quantity)
+        else:
+            changed = add_drop(session, account_id, config.id, payload.quantity)
+            memo_state(session, account_id).version += 1
+        result = describe_item(session, changed)
+        return finish_operation(session, account_id, f'{target}_edit', item_id, payload, fingerprint,
+                                before, {'remaining': None if target == 'drops' and item.quantity == 0 else dump(item),
+                                         'corrected': dump(changed)},
+                                f"更正 {payload.quantity} 件装备配置；其他记录和角色穿戴保持原样", result)
 
     @router.post('/warehouse/{stack_id}/equip')
     def warehouse_equip(account_id: str, stack_id: str, payload: WarehouseEquip, session: Session = WRITE):
@@ -210,9 +265,7 @@ def make_inventory_router(engine, read_database):
             return replay
         template = create_template(session, payload.equipment)
         config = create_config(session, template, payload.choices)
-        note = RaidDrop(id=new_id(), account_id=account_id, config_id=config.id, quantity=payload.quantity, version=0, created_at=datetime.now(timezone.utc).isoformat())
-        session.add(note)
-        session.flush()
+        note = add_drop(session, account_id, config.id, payload.quantity)
         memo_state(session, account_id).version += 1
         item = describe_item(session, note)
         return finish_operation(session, account_id, 'drop_add', note.id, payload, fingerprint, None, dump(note),
@@ -276,14 +329,31 @@ def make_inventory_router(engine, read_database):
     @router.get('/history')
     def history(account_id: str, session: Session = DB):
         active_account(session, account_id)
-        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成'}
-        rows = session.scalars(select(AuditEvent).where(AuditEvent.account_id == account_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id).limit(50))
+        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'drop_merge_migration': '归并相同掉落'}
+        rows = list(session.scalars(select(AuditEvent).where(AuditEvent.account_id == account_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id).limit(50)))
+        cycle_sockets = dict(session.execute(select(Cycle.id, Cycle.has_constitution_sockets)).all())
+        snapshots = {row.id: json.loads(row.snapshots) for row in rows}
+        config_ids = set()
+        for row in rows:
+            data = snapshots[row.id]
+            if row.operation in ('replace_equipment', 'warehouse_equip'):
+                for side in ('before', 'after'):
+                    worn = data[side]['worn'] if row.operation == 'warehouse_equip' else data[side]
+                    if worn.get('config_id'):
+                        config_ids.add(worn['config_id'])
+        equipment_records = {config.id: (config, template) for config, template in session.execute(
+            select(EquipmentConfig, Template).join(Template, Template.id == EquipmentConfig.template_id)
+            .where(EquipmentConfig.id.in_(config_ids)))} if config_ids else {}
+        names = dict(session.execute(select(Character.id, Character.name).where(Character.account_id == account_id)).all())
         result = []
         def equipment_name(config_id):
             if not config_id:
                 return '未装备'
-            config = require(session, EquipmentConfig, config_id)
-            template = require(session, Template, config.template_id)
+            pair = equipment_records.get(config_id)
+            if pair is None:
+                return '历史装备'
+            config, template = pair
+            applicable = socket_applicable(template.equipment_type, cycle_sockets[template.cycle_origin_id])
             parts = []
             for prefix, title in [('enchant', '附魔'), ('rainbow', '五彩石')]:
                 state = getattr(config, f'{prefix}_state')
@@ -293,17 +363,16 @@ def make_inventory_router(engine, read_database):
                 value = getattr(config, f'{prefix}_constitution')
                 text = '未录入' if state == 'unknown' else '确认无' if state == 'none' else (name or '手填数值') + ('（按名称查原周期配置）' if value is None else f'（体质{value}）')
                 parts.append(f'{title}{text}')
-            return f"{label(template.short_label, template.has_constitution_socket, template.green_stats_ok)} · {template.actual_grade}品（{'，'.join(parts)}）"
+            return f"{label(template.short_label, template.has_constitution_socket, template.green_stats_ok, applicable)} · {template.actual_grade}品（{'，'.join(parts)}）"
         for row in rows:
-            snapshot = json.loads(row.snapshots)
+            snapshot = snapshots[row.id]
             summary = snapshot.get('summary', '')
             if row.operation == 'replace_equipment':
                 before, after = snapshot['before'], snapshot['after']
-                character = session.get(Character, before['character_id'])
-                summary = f"{character.name}的{dict(SLOTS)[before['slot']]}：{equipment_name(before['config_id'])} → {equipment_name(after['config_id'])}；旧装备不回库"
+                name = names.get(before['character_id'], '历史角色')
+                summary = f"{name}的{dict(SLOTS)[before['slot']]}：{equipment_name(before['config_id'])} → {equipment_name(after['config_id'])}；旧装备不回库"
             elif row.operation == 'character_growth':
-                character = session.get(Character, row.entity_id)
-                summary = f'{character.name if character else "历史角色"}：更新部位精炼、五行石或体质计算口径；穿戴与库存不变'
+                summary = f'{names.get(row.entity_id, "历史角色")}：更新部位精炼、五行石或体质计算口径；穿戴与库存不变'
             elif row.operation == 'warehouse_equip':
                 summary += f"；穿戴：{equipment_name(snapshot['before']['worn']['config_id'])} → {equipment_name(snapshot['after']['worn']['config_id'])}"
             if row.operation in titles:

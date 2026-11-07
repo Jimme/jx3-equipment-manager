@@ -1,23 +1,26 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { ChoicesFields, draftChoiceSummary, draftChoices, serializeChoices } from './ChoicesFields';
 import { compareEquipment } from './equipmentUtils';
 import type { Data, InventoryItem, Run } from './types';
 
-type Props = { data: Data; item: InventoryItem; requestId: string; run: Run; pending: boolean; close: () => void; initialCharacter?: string; initialSlot?: string; fixedTarget?: boolean; targetInTitle?: boolean };
+type Props = { data: Data; item: InventoryItem; requestId: string; run: Run; pending: boolean; close: () => void; savedClose?: () => void; onDirty?: (dirty: boolean) => void; initialCharacter?: string; initialSlot?: string; fixedTarget?: boolean; targetInTitle?: boolean };
 
-export function WarehouseEquip({ data, item, requestId, initialCharacter, initialSlot, fixedTarget = false, targetInTitle = false, run, pending, close }: Props) {
+export function WarehouseEquip({ data, item, requestId, initialCharacter, initialSlot, fixedTarget = false, targetInTitle = false, run, pending, close, savedClose, onDirty }: Props) {
   const characters = data.matrix!.characters;
   const [characterId, setCharacterId] = useState(initialCharacter ?? (characters.length === 1 ? characters[0].id : ''));
   const [slot, setSlot] = useState(initialSlot ?? (item.equipment.equipment_type === 'ring' ? 'ring1' : item.equipment.equipment_type));
   const [choices, setChoices] = useState(() => draftChoices(item.choices));
+  const initial = useRef(JSON.stringify([characterId, slot, choices]));
+  const dirty = JSON.stringify([characterId, slot, choices]) !== initial.current;
+  useEffect(() => { onDirty?.(dirty); return () => onDirty?.(false); }, [dirty, onDirty]);
   const cell = data.matrix!.cells[characterId]?.[slot];
   const character = characters.find(c => c.id === characterId);
   const slotName = data.workspace.slots.find(s => s.key === slot)?.name;
-  const downgrade = cell?.equipment && compareEquipment(item.equipment, cell.equipment) < 0;
+  const downgrade = cell?.equipment && compareEquipment(item.equipment, cell.equipment, data.matrix!.account.comparison_mode) < 0;
   return <form onSubmit={e => { e.preventDefault(); if (!cell) return; void run(() => api(`/accounts/${data.accountId}/warehouse/${item.id}/equip`, 'POST', {
     request_id: requestId, expected_version: item.version, expected_equipment_version: cell.version, character_id: characterId, slot, choices: serializeChoices(choices),
-  }), '已穿戴', close); }}><fieldset disabled={pending}>
+  }), '已穿戴', savedClose ?? close); }}><fieldset disabled={pending}>
     <p className="item-heading">{item.label} · {item.equipment.actual_grade} 品 <small>可用 {item.quantity} 件</small></p>
     {!targetInTitle && <div className="form-grid">
       {!fixedTarget && characters.length > 1 ? <label>给哪个角色<select aria-label="穿戴角色" required value={characterId} onChange={e => setCharacterId(e.target.value)}><option value="">请选择角色</option>{characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label> : <p className="fixed-field"><span>角色</span><strong>{character?.name}</strong></p>}

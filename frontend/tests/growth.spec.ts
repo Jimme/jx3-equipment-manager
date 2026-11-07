@@ -36,6 +36,7 @@ test('角色养成：集中编辑、明细、口径核实、换装保留及冲�
   await expect(dialog.getByLabel('附魔体质贡献',{exact:true})).toHaveValue('');
   await dialog.getByLabel('附魔体质贡献',{exact:true}).fill('0');
   await expect(dialog.getByText('当前使用手填体质 0',{exact:true})).toBeVisible();
+  page.once('dialog',prompt=>prompt.accept());
   await dialog.getByRole('button',{name:'取消',exact:true}).click();
   await page.getByRole('button',{name:'养成验收角色 养成与体质',exact:true}).click();
   await expect(dialog.getByLabel('帽子精炼')).toHaveValue('');

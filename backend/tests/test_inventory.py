@@ -201,8 +201,8 @@ def test_clear_stale_memo_is_rejected_and_valid_clear_keeps_stock(client, setup)
     url = path(setup) + '/drops/clear'
     assert client.post(url, json={'request_id': request_id(), 'expected_version': old_version}).status_code == 409
     body = {'request_id': request_id(), 'expected_version': daily(client, setup)['drop_version']}
-    assert client.post(url, json=body).json()['cleared'] == 2
-    assert client.post(url, json=body).json()['cleared'] == 2
+    assert client.post(url, json=body).json()['cleared'] == 1
+    assert client.post(url, json=body).json()['cleared'] == 1
     assert daily(client, setup)['warehouse'][0]['quantity'] == 2
     assert daily(client, setup)['drops'] == []
 

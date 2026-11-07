@@ -26,10 +26,10 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await dialog.getByRole('button', { name: '保存库存', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect((await state()).warehouse[0].quantity).toBe(2);
-  const hatStock = page.getByRole('button', { name: '查看帽子共享仓库' });
-  await expect(hatStock).toContainText('测+ ×2');
-  await hatStock.click();
-  await expect(page.getByRole('heading', { name: '共享仓库 · 帽子' })).toBeVisible();
+  const hatStock = page.getByRole('button', { name: '编辑帽子共享仓库配置1' });
+  await expect(hatStock).toContainText('测+ · 1110 · ×2');
+  await page.getByRole('button', { name: '共享仓库', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '共享仓库', exact: true })).toBeVisible();
   await page.getByRole('region', { name: '装备明细' }).getByRole('button', { name: '给角色穿戴', exact: true }).click();
   await dialog.getByLabel('穿戴角色').selectOption(first.id);
   await dialog.getByText('附魔', { exact: true }).click();
@@ -73,7 +73,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await expect(dialog).not.toBeVisible();
   expect((await state()).warehouse[0].quantity).toBe(2);
   expect((await state()).drops[0].quantity).toBe(1);
-  await expect(page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '武器', exact: true }) }).getByRole('button', { name: /^查看/ })).toHaveCount(2);
+  await expect(page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '武器', exact: true }) }).getByRole('button', { name: /^编辑武器/ })).toHaveCount(2);
   await page.locator('.matrix-section').screenshot({ path: '../.tools/screenshots/matrix-inventory.png' });
   page.once('dialog', prompt => prompt.accept());
   await page.getByRole('button', { name: '清空本次掉落', exact: true }).click();

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -179,6 +179,19 @@ def make_cycle_data_router(engine, read_database):
 
     READ, WRITE = Depends(read_database), Depends(write_database)
 
+    @router.get('/{cycle_id}/socket-impact')
+    def socket_impact(cycle_id: str, session: Session = READ):
+        cycle = require(session, Cycle, cycle_id)
+        result = {'version': cycle.version}
+        for name, model in [('worn', WornEquipment), ('warehouse', WarehouseStack), ('drops', RaidDrop)]:
+            count = model.quantity if name != 'worn' else model.character_id
+            aggregate = func.sum(count) if name != 'worn' else func.count(count)
+            result[name] = session.scalar(select(aggregate).select_from(model)
+                .join(EquipmentConfig, model.config_id == EquipmentConfig.id)
+                .join(Template, EquipmentConfig.template_id == Template.id)
+                .where(Template.cycle_origin_id == cycle_id, Template.equipment_type != 'ring')) or 0
+        return result
+
     def editable(session, cycle_id):
         cycle = require(session, Cycle, cycle_id)
         if cycle.archived:
@@ -270,7 +283,7 @@ def make_cycle_data_router(engine, read_database):
         # 独立连接备份已提交的旧状态；此时还没有修改任何业务数据。
         backup = backup_database(Path(engine.url.database), 'before-cycle-change')
         if token.kind == 'copy':
-            copied = Cycle(id=new_id(), name=rows['name'], archived=False, version=0, copied_from_id=cycle_id)
+            copied = Cycle(id=new_id(), name=rows['name'], archived=False, version=0, copied_from_id=cycle_id, has_constitution_sockets=cycle.has_constitution_sockets)
             session.add(copied)
             session.flush()
             for source in session.scalars(select(Source).where(Source.cycle_id == cycle_id)):
