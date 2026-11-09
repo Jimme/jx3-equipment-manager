@@ -1,9 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, optionalInteger } from './api';
+import { api, optionalInteger, recoverOperation, uncertainOperations } from './api';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('丢失响应后的操作核对', () => {
+  it('表单关闭后仍可重放核对，未核对前换标识也不能重做同一操作', async () => {
+    const fetch = vi.fn().mockRejectedValueOnce(new Error('lost')).mockResolvedValueOnce(new Response('{"quantity":3}'));
+    vi.stubGlobal('fetch', fetch);
+    const body = { request_id: 'independent-recovery', quantity: 3 };
+    await expect(api('/independent', 'POST', body)).rejects.toThrow('原样重试');
+    expect(uncertainOperations().some(([key]) => key === body.request_id)).toBe(true);
+    await expect(api('/independent', 'POST', { ...body, request_id: 'new-key-cannot-duplicate' })).rejects.toThrow('还有结果待核对');
+    await expect(recoverOperation(body.request_id)).resolves.toEqual({ quantity: 3 });
+    expect(uncertainOperations().some(([key]) => key === body.request_id)).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
+  });
   it('原样重试复用原标识，修改草稿先核对旧提交且不提交新内容', async () => {
     const fetch = vi.fn().mockRejectedValueOnce(new Error('connection lost'))
       .mockResolvedValueOnce(new Response('{"quantity":1}'))

@@ -180,10 +180,10 @@ def test_archive_restore_and_order(client, setup):
     account_id = setup['account']['id']
     character_id = setup['character']['id']
     path = f'/api/accounts/{account_id}/characters/{character_id}'
-    assert client.put(path, json={'name': '改名', 'sort_order': 2, 'archived': True}).status_code == 200
+    assert client.put(path, json={'name': '改名', 'sort_order': 2, 'archived': True, 'expected_version': 0}).status_code == 200
     assert client.get(f'/api/accounts/{account_id}/matrix').json()['characters'] == []
     assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup)}).status_code == 409
-    client.put(path, json={'name': '改名', 'sort_order': 2, 'archived': False})
+    client.put(path, json={'name': '改名', 'sort_order': 2, 'archived': False, 'expected_version': 1})
     client.post(f'/api/accounts/{account_id}/characters', json={'name': '排在前面', 'sort_order': 1})
     assert [c['name'] for c in client.get(f'/api/accounts/{account_id}/matrix').json()['characters']] == ['排在前面', '改名']
 
@@ -235,7 +235,7 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
         command.upgrade(config, '0001')
         conn.exec_driver_sql("INSERT INTO equipment_cycles (id,name,archived) VALUES ('cycle','旧周期',0)")
         conn.exec_driver_sql("INSERT INTO workspace_settings (id,active_cycle_id) VALUES (1,'cycle')")
-        conn.execute(Account.__table__.insert().values(id='account', name='已有账号', target_grade=1110))
+        conn.exec_driver_sql("INSERT INTO game_accounts(id,name,sort_order,archived,target_grade,comparison_mode) VALUES ('account','已有账号',0,0,1110,'strict')")
         conn.exec_driver_sql(
             'INSERT INTO characters (id, account_id, name, sort_order, archived) VALUES (?, ?, ?, 0, 0)',
             ('character', 'account', '已有角色'),
@@ -251,7 +251,7 @@ def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
         assert conn.exec_driver_sql('SELECT comparison_mode FROM game_accounts').scalar() == 'strict'
         assert conn.exec_driver_sql('SELECT version FROM character_equipment').scalar() == 3
         assert conn.exec_driver_sql('SELECT account_id FROM audit_events').scalar() == 'account'
-        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0009'
+        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0010'
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE game_accounts SET comparison_mode='combined'")
     with pytest.raises(IntegrityError), engine.begin() as conn:

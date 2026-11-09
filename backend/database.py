@@ -51,6 +51,46 @@ def backup_database(path: Path, prefix: str = "backup") -> Path:
     return destination
 
 
+def remove_snapshot(path: Path):
+    """Only standalone application snapshots, never an active database or its journal."""
+    path = path.resolve()
+    if path.parent.name != 'backups' or path.suffix != '.sqlite3' or path.name == 'app.sqlite3':
+        raise ValueError('只能清理独立备份')
+    names = {str(path), str(path) + '-wal', str(path) + '-shm'}
+    if Path('/proc').is_dir():
+        for process in Path('/proc').glob('[0-9]*'):
+            try:
+                descriptors = list((process / 'fd').iterdir())
+            except (OSError, PermissionError):
+                continue
+            for descriptor in descriptors:
+                try:
+                    if os.readlink(descriptor).removesuffix(' (deleted)') in names:
+                        raise RuntimeError('备份仍有打开连接，请稍后清理')
+                except OSError:
+                    continue
+    lock = None
+    if path.exists():
+        lock = sqlite3.connect(path, timeout=0, isolation_level=None)
+        try:
+            lock.execute('PRAGMA locking_mode=EXCLUSIVE')
+            lock.execute('BEGIN EXCLUSIVE')
+        except Exception:
+            lock.close()
+            raise
+    try:
+        if lock:
+            lock.execute('ROLLBACK')
+            lock.close()
+            lock = None
+        path.unlink(missing_ok=True)
+        for suffix in ('-wal', '-shm'):
+            path.with_name(path.name + suffix).unlink(missing_ok=True)
+    finally:
+        if lock:
+            lock.close()
+
+
 def make_engine(data_dir: Path):
     data_dir.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{(data_dir / 'app.sqlite3').as_posix()}", connect_args={"check_same_thread": False, "timeout": 10})

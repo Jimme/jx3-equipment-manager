@@ -66,7 +66,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await expect(dialog).not.toBeVisible();
   expect((await state()).warehouse).toHaveLength(0);
   expect((await state()).drops[0].quantity).toBe(3);
-  await page.getByRole('button', { name: '转入仓库', exact: true }).click();
+  await page.getByRole('button', { name: '转入部分…', exact: true }).click();
   await expect(dialog.getByLabel('实际获得的数量')).toHaveValue('1');
   await dialog.getByLabel('实际获得的数量').fill('2');
   await dialog.getByRole('button', { name: '确认转入', exact: true }).click();

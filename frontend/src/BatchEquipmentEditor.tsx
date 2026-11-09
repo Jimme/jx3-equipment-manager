@@ -11,7 +11,7 @@ type Fields = {
   actual_grade: string; has_constitution_socket: string; green_stats_ok: string;
   name: string; note: string; base_constitution_override: string;
 };
-type Row = { slot: string; selected: boolean; action: Action; version: number; fields: Fields; sourceChoice: string; choices: ChoicesDraft; warehouseId: string; stockVersion: number };
+type Row = { slot: string; selected: boolean; action: Action; version: number; fields: Fields; sourceChoice: string; choices: ChoicesDraft; warehouseId: string; stockVersion: number; gradeManual: boolean };
 type Preview = { preview_id?: string; unchanged: boolean; changes: { slot: string; name: string; action: string; before: string; after: string; before_equipment?: Template; after_equipment?: Template; before_choices?: Parameters<typeof choiceSummary>[0]; after_choices?: Parameters<typeof choiceSummary>[0]; warehouse_id: string | null }[]; deductions: Record<string, number> };
 
 function fieldsFor(equipment: Template | null, cycleId: string): Fields {
@@ -32,7 +32,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   const initialRow = (slot: string): Row => {
     const cell = currentCell(slot);
     return { slot, selected: false, action: 'keep', version: cell.version, fields: fieldsFor(cell.equipment, working.cycleId),
-      sourceChoice: cell.equipment ? 'saved' : '', choices: draftChoices(cell.choices), warehouseId: '', stockVersion: 0 };
+      gradeManual: !!cell.equipment, sourceChoice: cell.equipment ? 'saved' : '', choices: draftChoices(cell.choices), warehouseId: '', stockVersion: 0 };
   };
   const [rows, setRows] = useState<Row[]>(() => data.workspace.slots.map(slot => initialRow(slot.key)));
   const [sources, setSources] = useState<Record<string, Source[]>>({ [data.cycleId]: data.sources });
@@ -63,11 +63,11 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   function update(slot: string, values: Partial<Row>) {
     setRows(old => old.map(row => row.slot === slot ? { ...row, ...values } : row));
   }
-  function field(row: Row, values: Partial<Fields>) { update(row.slot, { fields: { ...row.fields, ...values } }); }
+  function field(row: Row, values: Partial<Fields>) { update(row.slot, { fields: { ...row.fields, ...values }, ...(values.actual_grade !== undefined ? { gradeManual: true } : {}) }); }
   function changeAction(row: Row, action: Action) {
     const fresh = initialRow(row.slot);
     update(row.slot, action === 'new'
-      ? { ...fresh, selected: row.selected, action, fields: fieldsFor(null, working.cycleId), choices: draftChoices(), sourceChoice: '' }
+      ? { ...fresh, selected: row.selected, action, fields: fieldsFor(null, working.cycleId), choices: draftChoices(), sourceChoice: '', gradeManual: false }
       : { ...fresh, selected: row.selected, action });
   }
   function manualRow(row: Row): Row {
@@ -87,22 +87,23 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
       const row = manualRow(original);
       let fields = { ...row.fields };
       let sourceChoice = row.sourceChoice;
+      let gradeManual = row.gradeManual;
       if (copy && copied) {
         const from = copied.fields;
         fields = { ...fields, cycle_origin_id: from.cycle_origin_id, source_id: from.source_id, source_type: from.source_type,
           source_name: from.source_name, short_label: from.short_label, actual_grade: from.actual_grade,
           has_constitution_socket: from.has_constitution_socket, green_stats_ok: from.green_stats_ok };
-        sourceChoice = copied.sourceChoice;
+        sourceChoice = copied.sourceChoice; gradeManual = copied.gradeManual;
       } else {
         if (source) {
           fields = { ...fields, cycle_origin_id: source.cycle_id, source_id: source.id, source_type: source.source_type, source_name: source.name, short_label: source.short_label };
-          if (!fields.actual_grade) fields.actual_grade = source.default_grade?.toString() ?? '';
+          if (!fields.actual_grade || !gradeManual) fields.actual_grade = source.default_grade?.toString() ?? '';
         }
-        if (uniform.grade) fields.actual_grade = uniform.grade;
+        if (uniform.grade) { fields.actual_grade = uniform.grade; gradeManual = true; }
         if (uniform.socket) fields.has_constitution_socket = uniform.socket;
         if (uniform.green) fields.green_stats_ok = uniform.green;
       }
-      return { ...row, fields, sourceChoice };
+      return { ...row, fields, sourceChoice, gradeManual };
     }));
   }
   async function reread() {
@@ -136,12 +137,15 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
       <tbody>{preview.changes.map(change => <tr key={change.slot}><th>{change.name}</th>
         <td>{({ edit: '纠错', new: '手动换装', warehouse: '库存穿戴', clear: '清除' } as Record<string, string>)[change.action]}{change.warehouse_id && ' · 库存扣 1 件'}</td>
         <td>{change.before}{change.before_equipment && <small>{working.workspace.cycles.find(c => c.id === change.before_equipment!.cycle_origin_id)?.name} · {change.before_equipment.source_name} {change.before_equipment.note}</small>}
+          {change.before_equipment && <small>名称：{change.before_equipment.name || '未填写'}；基础体质覆盖：{change.before_equipment.base_constitution_override == null ? '使用原周期默认（缺失为未知）' : change.before_equipment.base_constitution_override}</small>}
           {change.before_choices && <small>{choiceSummary(change.before_choices, typeFor(change.slot) === 'weapon')}</small>}</td>
         <td>{change.after}{change.after_equipment && <small>{working.workspace.cycles.find(c => c.id === change.after_equipment!.cycle_origin_id)?.name} · {change.after_equipment.source_name} {change.after_equipment.note}</small>}
+          {change.after_equipment && <small>名称：{change.after_equipment.name || '未填写'}；基础体质覆盖：{change.after_equipment.base_constitution_override == null ? '使用原周期默认（缺失为未知）' : change.after_equipment.base_constitution_override}</small>}
           {change.after_choices && <small>{choiceSummary(change.after_choices, typeFor(change.slot) === 'weapon')}</small>}</td>
       </tr>)}</tbody></table></div>}
     <p>合计修改 {preview.changes.length} 个部位，库存取出 {Object.values(preview.deductions).reduce((a, b) => a + b, 0)} 件。</p>
     <div className="dialog-actions"><button disabled={pending} onClick={() => setPreview(null)}>返回修改</button>
+      <button disabled={pending} onClick={() => void run(reread, '最新状态已读取，草稿保留，请核对后重新预览', undefined, false)}>读取最新状态核对</button>
       <button className="primary" disabled={pending || preview.unchanged} onClick={() => void run(() => api(
         `/accounts/${working.accountId}/characters/${character.id}/equipment-batch/apply`, 'POST', { request_id: operationId, preview_id: preview.preview_id },
       ), '角色装备已整批保存', savedClose)}>确认整批保存并备份</button></div>
@@ -165,7 +169,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
         <label>统一绿字<select value={uniform.green} onChange={e => setUniform({ ...uniform, green: e.target.value })}><option value="">保留</option><option value="true">达标</option><option value="false">未达标</option></select></label>
         <button type="button" disabled={pending || !chosen.length || !Object.values(uniform).some(Boolean)} onClick={() => applyUniform()}>应用到勾选行</button>
       </div>
-      <p className="hint">来源只补空品级；填写统一品级才覆盖原数值。孔不适用的行会自动跳过孔条件。</p>
+      <p className="hint">来源补空或更新未手改的默认品级，保留手填值；填写统一品级才覆盖原数值。孔不适用的行跳过孔条件。</p>
       <div className="batch-toolbar"><label>复制通用字段自<select aria-label="复制行字段" value={copySlot} onChange={e => setCopySlot(e.target.value)}><option value="">请选择部位</option>{working.workspace.slots.map(slot => <option key={slot.key} value={slot.key}>{slot.name}</option>)}</select></label>
         <button type="button" disabled={pending || !chosen.length || !copySlot} onClick={() => applyUniform(true)}>复制到勾选行</button></div>
       <p className="hint">复制原周期、来源、品级、孔和绿字；附魔、五彩石及单件体质仍逐行核对。</p>
@@ -201,10 +205,10 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
             {manual && <div className="batch-fields">
               <label>来源<select aria-label={`${name}批量来源`} required value={row.fields.source_id || row.sourceChoice} onChange={e => {
                 const source = (sources[row.fields.cycle_origin_id] ?? []).find(item => item.id === e.target.value);
-                if (source) update(row.slot, { fields: { ...row.fields, source_id: source.id, source_type: source.source_type, source_name: source.name, short_label: source.short_label, actual_grade: row.fields.actual_grade || source.default_grade?.toString() || '' }, sourceChoice: '' });
+                if (source) update(row.slot, { fields: { ...row.fields, source_id: source.id, source_type: source.source_type, source_name: source.name, short_label: source.short_label, actual_grade: row.fields.actual_grade && row.gradeManual ? row.fields.actual_grade : source.default_grade?.toString() || '' }, sourceChoice: '' });
                 else update(row.slot, { sourceChoice: e.target.value, fields: { ...row.fields, source_id: '' } });
               }}><option value="">请选择来源</option>{row.sourceChoice === 'saved' && <option value="saved">{row.fields.source_name}（原记录）</option>}{(sources[row.fields.cycle_origin_id] ?? []).map(source => <option key={source.id} value={source.id}>{source.name}</option>)}<option value="manual">手动来源</option></select></label>
-              <label>真实品级<input aria-label={`${name}批量品级`} required type="number" min="1" max="2147483647" value={row.fields.actual_grade} onChange={e => field(row, { actual_grade: e.target.value })}/></label>
+              <label>真实品级<input aria-label={`${name}批量品级`} required type="number" min="1" max="2147483647" value={row.fields.actual_grade} onChange={e => field(row, { actual_grade: e.target.value })}/>{row.fields.source_id && <button type="button" className="quiet-button" onClick={() => { const source = sources[row.fields.cycle_origin_id]?.find(item => item.id === row.fields.source_id); if (source?.default_grade != null) update(row.slot, { fields: { ...row.fields, actual_grade: String(source.default_grade) }, gradeManual: false }); }}>使用来源默认</button>}</label>
               {socketApplicable(row) ? <BinaryChoice title={`${name}体质孔`} value={row.fields.has_constitution_socket} yes="有" no="无" onChange={value => field(row, { has_constitution_socket: value })}/> : <span className="hint">无体质孔</span>}
               <BinaryChoice title={`${name}绿字`} value={row.fields.green_stats_ok} yes="达标" no="未达标" onChange={value => field(row, { green_stats_ok: value })}/>
               {row.sourceChoice === 'manual' && <><label>来源名称<input aria-label={`${name}批量来源名称`} required maxLength={100} value={row.fields.source_name} onChange={e => field(row, { source_name: e.target.value })}/></label>

@@ -1,3 +1,4 @@
+from .conftest import legacy_document, legacy_database_columns
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -187,7 +188,7 @@ def test_history_query_count_is_bounded_and_templates_have_held_filter(client, s
 def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client, setup, tmp_path):
     item, _ = add(client, setup, 'drops', quantity=2)
     document = client.get('/api/data/export').json()
-    document['schema_revision'] = '0008'
+    document = legacy_document(document, '0008')
     duplicate = {**document['tables']['raid_drop_notes'][0], 'id': str(uuid4()), 'quantity': 3}
     document['tables']['raid_drop_notes'].append(duplicate)
     response = client.post('/api/data/import-preview', content=json.dumps(document).encode())
@@ -201,8 +202,9 @@ def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client
     database = source / 'app.sqlite3'
     database.write_bytes(client.get('/api/data/backups/' + backup).content)
     migration_before = client.get('/api/data/export').json()
-    migration_before['schema_revision'] = '0008'
+    migration_before = legacy_document(migration_before, '0008')
     with sqlite3.connect(database) as connection:
+        legacy_database_columns(connection)
         connection.executescript('ALTER TABLE raid_drop_notes RENAME TO old_drops; CREATE TABLE raid_drop_notes AS SELECT * FROM old_drops; DROP TABLE old_drops;')
         current = connection.execute('SELECT * FROM raid_drop_notes').fetchone()
         columns = [row[1] for row in connection.execute('PRAGMA table_info(raid_drop_notes)')]
@@ -216,7 +218,7 @@ def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client
         with sqlite3.connect(database) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
-        assert migrated.get('/api/data/export').json()['schema_revision'] == '0009'
+        assert migrated.get('/api/data/export').json()['schema_revision'] == '0010'
         from scripts.verify_update import verify_tables
         assert verify_tables(migration_before, migrated.get('/api/data/export').json()) == 1
 
@@ -224,11 +226,11 @@ def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client
 def test_deployment_verifier_checks_expected_defaults_and_detects_real_changes(client, setup):
     from scripts.verify_update import expected_tables, verify_tables
     before = client.get('/api/data/export').json()
-    before['schema_revision'] = '0007'
+    before = legacy_document(before, '0007')
     for cycle in before['tables']['equipment_cycles']:
         cycle.pop('has_constitution_sockets')
     expected, _ = expected_tables(before)
-    after = {'schema_revision': '0009', 'tables': expected}
+    after = {'schema_revision': '0010', 'tables': expected}
     assert verify_tables(before, after) == 0
     after['tables']['equipment_cycles'][0]['has_constitution_sockets'] = False
     with pytest.raises(AssertionError, match='Business data differs'):

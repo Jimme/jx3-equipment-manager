@@ -1,3 +1,4 @@
+from .conftest import legacy_document, legacy_database_columns
 import copy
 import json
 import sqlite3
@@ -52,18 +53,20 @@ def test_cycle_and_ring_socket_rules_keep_original_cycle_and_stone_levels(client
 def test_previous_cycle_settings_import_and_sqlite_restore_default_to_socket_support(client, setup, tmp_path):
     current = client.get('/api/data/export').json()
     legacy = copy.deepcopy(current)
-    legacy['schema_revision'] = '0007'
+    legacy = legacy_document(legacy, '0007')
     for cycle in legacy['tables']['equipment_cycles']:
         cycle.pop('has_constitution_sockets')
     response = client.post('/api/data/import-preview', content=json.dumps(legacy).encode())
     assert response.status_code == 200, response.text
-    assert response.json()['unchanged']
+    assert not response.json()['unchanged']  # Legacy roles gain conservative history metadata.
     name = client.post('/api/data/backups').json()['name']
     path = tmp_path / 'previous.sqlite3'
     path.write_bytes(client.get('/api/data/backups/' + name).content)
     with sqlite3.connect(path) as connection:
+        legacy_database_columns(connection)
         connection.execute('ALTER TABLE equipment_cycles DROP COLUMN has_constitution_sockets')
         connection.execute("UPDATE alembic_version SET version_num='0007'")
+    connection.close()
     response = client.post('/api/data/restore-preview', content=path.read_bytes())
     assert response.status_code == 200, response.text
-    assert response.json()['unchanged']
+    assert not response.json()['unchanged']  # Legacy roles gain conservative history metadata.

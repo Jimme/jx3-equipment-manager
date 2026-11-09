@@ -32,3 +32,26 @@ def equipment_payload(setup, **overrides):
 
 def equipment_url(setup, slot='hat'):
     return f"/api/accounts/{setup['account']['id']}/characters/{setup['character']['id']}/equipment/{slot}"
+
+
+def legacy_document(document, revision):
+    """Construct an actual pre-0010 format, not a new format with an old label."""
+    import copy
+    result = copy.deepcopy(document)
+    result['schema_revision'] = revision
+    for name in ('creation_receipts', 'raid_cd_settings'):
+        result['tables'].pop(name, None)
+    for row in result['tables']['game_accounts']:
+        row.pop('version', None)
+    for row in result['tables']['characters']:
+        for key in ('version', 'raid_version', 'history_complete'):
+            row.pop(key, None)
+    return result
+
+
+def legacy_database_columns(connection):
+    for table in ('creation_receipts', 'raid_cd_settings'):
+        connection.execute('DROP TABLE ' + table)
+    connection.execute('ALTER TABLE game_accounts DROP COLUMN version')
+    for name in ('version', 'raid_version', 'history_complete'):
+        connection.execute('ALTER TABLE characters DROP COLUMN ' + name)

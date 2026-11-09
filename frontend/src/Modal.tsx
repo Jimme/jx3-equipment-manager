@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { RecoveryNotice } from './RecoveryNotice';
 
 export function Modal({ title, close, children, wide = false, compact = false, busy = false }: { title: string; close: () => void; children: ReactNode; wide?: boolean; compact?: boolean; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -8,6 +9,7 @@ export function Modal({ title, close, children, wide = false, compact = false, b
     if (details) details.open = true;
   }} aria-label={title} aria-busy={busy}>
     <div className="dialog-heading"><h2>{title}</h2><button type="button" className="icon-button" disabled={busy} onClick={close} aria-label="关闭">×</button></div>
+    <RecoveryNotice/>
     {children}
   </dialog>;
 }

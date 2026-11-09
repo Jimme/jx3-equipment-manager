@@ -588,3 +588,12 @@ dialog .menu-tabs { margin-bottom:8px; border-bottom:1px solid var(--line) }
 .binary-choice label:has(:checked) { background: #e5efe8; border-color: #86aa95; color: var(--ink); }
 .binary-choice input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
 .binary-choice small { display:block; margin-top:3px; color:var(--muted); font-size:var(--detail-size); }
+
+.recovery-notice,.latest-record { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:6px 0; }
+.raid-cd-settings { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:6px 0; border-bottom:1px solid var(--line); margin-bottom:8px; }
+.raid-cd-settings small { color:var(--muted); }
+.entity-row { flex-wrap:wrap; }
+.entity-row .danger { white-space:nowrap; }
+.stock-cell { position:relative; }
+.stock-cell:has(.stock-quick) .stock-entry { padding-right:64px; }
+.stock-quick { position:absolute; right:3px; top:3px; min-height:22px; padding:2px 5px; font-size:var(--detail-size); }

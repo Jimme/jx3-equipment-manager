@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import asyncio
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
@@ -18,7 +20,10 @@ from .equipment_batch import make_batch_router
 from .cycle_data import make_cycle_data_router
 from .growth import make_growth_router, growth_reports, load_growth_slots
 from .data_management import make_data_router
-from .schemas import AccountPreferences, AccountPreferencesPatch, ActiveCycle, CycleInput, EquipInput, NamedInput, RaidCheckInput, SourceInput, TemplateInput
+from .creation import begin_creation, finish_creation
+from .management import edit_entity, make_management_router
+from .raid_cd import make_raid_router, raid_state, reconcile, sync_raid_cd
+from .schemas import AccountPreferences, AccountPreferencesPatch, ActiveCycle, CycleInput, EquipInput, ManagementPatch, MutationInput, NamedInput, RaidCheckInput, SourceInput, TemplateInput
 
 
 def create_app(data_dir: Path | None = None):
@@ -30,10 +35,25 @@ def create_app(data_dir: Path | None = None):
         with Session(engine) as session, session.begin():
             if session.get(Workspace, 1) is None:
                 session.add(Workspace(id=1, active_cycle_id=None))
-        yield
-        engine.dispose()
+        sync_raid_cd(engine)
+        async def tick():
+            while True:
+                await asyncio.sleep(20)
+                try:
+                    await asyncio.to_thread(sync_raid_cd, engine)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception('Raid CD reconciliation failed; retrying on next tick')
+        task = asyncio.create_task(tick())
+        try:
+            yield
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.10", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.11", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -41,6 +61,10 @@ def create_app(data_dir: Path | None = None):
             yield session
 
     DB = Depends(database)
+    def write_database():
+        with Session(engine.execution_options(sqlite_immediate=True)) as session:
+            yield session
+    WRITE = Depends(write_database)
 
     @app.exception_handler(IntegrityError)
     async def integrity_error(_, __):
@@ -55,15 +79,17 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.10"}
+        return {"status": "ok", "version": "0.1.11"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
+        sync_raid_cd(engine)
         return {
             "active_cycle_id": session.get(Workspace, 1).active_cycle_id,
             "cycles": [dump(c) for c in session.scalars(select(Cycle).order_by(Cycle.name, Cycle.id))],
             "accounts": [dump(a) for a in session.scalars(select(Account).order_by(Account.sort_order, Account.name, Account.id))],
             "slots": [{"key": key, "name": name} for key, name in SLOTS],
+            "raid_cd": raid_state(session),
         }
 
     @app.put("/api/workspace/active-cycle")
@@ -79,15 +105,17 @@ def create_app(data_dir: Path | None = None):
         return dump(workspace)
 
     @app.post("/api/cycles", status_code=201)
-    def add_cycle(payload: CycleInput, session: Session = DB):
+    def add_cycle(payload: CycleInput, session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, 'cycle', payload)
+        if replay is not None:
+            return replay
         cycle = Cycle(id=new_id(), name=payload.name, archived=False, has_constitution_sockets=payload.has_constitution_sockets if payload.has_constitution_sockets is not None else True)
         session.add(cycle)
         session.flush()
         workspace = session.get(Workspace, 1)
         workspace.active_cycle_id = cycle.id
         audit(session, "create_cycle", cycle.id, None, dump(cycle))
-        session.commit()
-        return dump(cycle)
+        return finish_creation(session, payload, fingerprint, dump(cycle))
 
     @app.put("/api/cycles/{cycle_id}")
     def edit_cycle(cycle_id: str, payload: CycleInput, session: Session = DB):
@@ -106,23 +134,22 @@ def create_app(data_dir: Path | None = None):
         return dump(cycle)
 
     @app.post("/api/accounts", status_code=201)
-    def add_account(payload: NamedInput, session: Session = DB):
-        account = Account(id=new_id(), **payload.model_dump(), target_grade=None, comparison_mode="strict")
+    def add_account(payload: NamedInput, session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, 'account', payload)
+        if replay is not None:
+            return replay
+        account = Account(id=new_id(), **payload.model_dump(exclude={'expected_version', 'request_id'}), target_grade=None, comparison_mode="strict")
         session.add(account)
         session.flush()
         audit(session, "create_account", account.id, None, dump(account), account.id)
-        session.commit()
-        return dump(account)
+        return finish_creation(session, payload, fingerprint, dump(account))
 
     @app.put("/api/accounts/{account_id}")
-    def edit_account(account_id: str, payload: NamedInput, session: Session = DB):
+    def edit_account(account_id: str, payload: NamedInput, session: Session = WRITE):
         account = require(session, Account, account_id)
-        before = dump(account)
-        for key, value in payload.model_dump().items():
-            setattr(account, key, value)
-        audit(session, "edit_account", account.id, before, dump(account), account.id)
-        session.commit()
-        return dump(account)
+        if payload.expected_version is None:
+            raise HTTPException(409, '旧版管理表单缺少版本，请刷新页面后核对再保存')
+        return edit_entity(session, account, ManagementPatch.model_validate(payload.model_dump(exclude={'request_id'})), account.id)
 
     @app.put("/api/accounts/{account_id}/preferences")
     def preferences(account_id: str, payload: AccountPreferences, session: Session = DB):
@@ -151,15 +178,19 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/accounts/{account_id}/characters")
     def characters(account_id: str, session: Session = DB):
+        sync_raid_cd(engine)
         require(session, Account, account_id)
         return [dump(c) for c in session.scalars(select(Character).where(Character.account_id == account_id).order_by(Character.sort_order, Character.name, Character.id))]
 
     @app.post("/api/accounts/{account_id}/characters", status_code=201)
-    def add_character(account_id: str, payload: NamedInput, session: Session = DB):
+    def add_character(account_id: str, payload: NamedInput, session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, 'character:' + account_id, payload)
+        if replay is not None:
+            return replay
         account = require(session, Account, account_id)
         if account.archived:
             raise HTTPException(409, "请先恢复账号")
-        character = Character(id=new_id(), account_id=account_id, **payload.model_dump())
+        character = Character(id=new_id(), account_id=account_id, **payload.model_dump(exclude={'request_id', 'expected_version'}))
         session.add(character)
         session.flush()
         session.add(CharacterCalculation(character_id=character.id))
@@ -167,28 +198,39 @@ def create_app(data_dir: Path | None = None):
             session.add(WornEquipment(character_id=character.id, slot=slot, config_id=None, version=0))
             session.add(SlotSetting(character_id=character.id, slot=slot, refine_level=None, stone_state="unknown", stone_level=None))
         audit(session, "create_character", character.id, None, dump(character), account_id)
-        session.commit()
-        return dump(character)
+        return finish_creation(session, payload, fingerprint, dump(character))
 
     @app.put("/api/accounts/{account_id}/characters/{character_id}")
-    def edit_character(account_id: str, character_id: str, payload: NamedInput, session: Session = DB):
+    def edit_character(account_id: str, character_id: str, payload: NamedInput, session: Session = WRITE):
         _, character = account_character(session, account_id, character_id)
-        before = dump(character)
-        for key, value in payload.model_dump().items():
-            setattr(character, key, value)
-        audit(session, "edit_character", character.id, before, dump(character), account_id)
-        session.commit()
-        return dump(character)
+        if payload.expected_version is None:
+            raise HTTPException(409, '旧版管理表单缺少版本，请刷新页面后核对再保存')
+        return edit_entity(session, character, ManagementPatch.model_validate(payload.model_dump(exclude={'request_id'})), account_id)
 
     @app.put("/api/accounts/{account_id}/characters/{character_id}/raid-checks/{difficulty}")
     def set_raid_check(account_id: str, character_id: str, difficulty: Literal['10', '25pt', '25yx'],
-                       payload: RaidCheckInput, session: Session = DB):
+                       payload: RaidCheckInput, session: Session = WRITE):
+        setting = reconcile(session)
         account, character = account_character(session, account_id, character_id)
         if account.archived or character.archived:
             raise HTTPException(409, "请先恢复账号和角色")
-        setattr(character, f'raid_{difficulty}', payload.cleared)
+        state = raid_state(session, setting)
+        if state['clock_warning']:
+            raise HTTPException(409, '服务时间异常，请先核对服务器时钟，进度未修改')
+        period = state['period_10' if difficulty == '10' else 'period_25']
+        if (payload.period is not None and payload.period != period) or (setting.enabled and payload.period is None):
+            session.commit()
+            raise HTTPException(409, '副本 CD 已变化，请读取本期进度后核对')
+        if payload.expected_version is not None and character.raid_version != payload.expected_version:
+            session.commit()
+            raise HTTPException(409, '副本进度已变化，请读取最新记录后核对')
+        before = dump(character)
+        if getattr(character, f'raid_{difficulty}') != payload.cleared:
+            setattr(character, f'raid_{difficulty}', payload.cleared)
+            character.raid_version += 1
+            audit(session, 'raid_check', character_id, before, dump(character), account_id)
         session.commit()
-        return {"cleared": payload.cleared}
+        return {"cleared": payload.cleared, 'raid_version': character.raid_version, 'period': period}
 
     @app.get("/api/cycles/{cycle_id}/sources")
     def sources(cycle_id: str, session: Session = DB):
@@ -196,19 +238,21 @@ def create_app(data_dir: Path | None = None):
         return [dump(s) for s in session.scalars(select(Source).where(Source.cycle_id == cycle_id).order_by(Source.name, Source.id))]
 
     @app.post("/api/cycles/{cycle_id}/sources", status_code=201)
-    def add_source(cycle_id: str, payload: SourceInput, session: Session = DB):
+    def add_source(cycle_id: str, payload: SourceInput, session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, 'source:' + cycle_id, payload)
+        if replay is not None:
+            return replay
         cycle = require(session, Cycle, cycle_id)
         if cycle.archived:
             raise HTTPException(409, '归档周期只读，请先恢复再编辑')
         if payload.expected_version is not None and cycle.version != payload.expected_version:
             raise HTTPException(409, '周期配置已变化，请重新读取后编辑')
-        source = Source(id=new_id(), cycle_id=cycle_id, **payload.model_dump(exclude={'expected_version'}))
+        source = Source(id=new_id(), cycle_id=cycle_id, **payload.model_dump(exclude={'expected_version', 'request_id'}))
         session.add(source)
         session.flush()
         session.execute(update(Cycle).where(Cycle.id == cycle_id).values(version=Cycle.version + 1))
         audit(session, "create_source", source.id, None, dump(source))
-        session.commit()
-        return dump(source)
+        return finish_creation(session, payload, fingerprint, dump(source))
 
     @app.put("/api/cycles/{cycle_id}/sources/{source_id}")
     def edit_source(cycle_id: str, source_id: str, payload: SourceInput, session: Session = DB):
@@ -221,7 +265,7 @@ def create_app(data_dir: Path | None = None):
         if source.cycle_id != cycle_id:
             raise HTTPException(404, "此周期下没有该来源")
         before = dump(source)
-        for key, value in payload.model_dump(exclude={'expected_version'}).items():
+        for key, value in payload.model_dump(exclude={'expected_version', 'request_id'}).items():
             setattr(source, key, value)
         session.execute(update(Cycle).where(Cycle.id == cycle_id).values(version=Cycle.version + 1))
         audit(session, "edit_source", source.id, before, dump(source))
@@ -266,6 +310,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/accounts/{account_id}/matrix")
     def matrix(account_id: str, include_archived: bool = False, session: Session = DB):
+        sync_raid_cd(engine)
         account = require(session, Account, account_id)
         query = select(Character).where(Character.account_id == account_id).order_by(Character.sort_order, Character.name, Character.id)
         if not include_archived:
@@ -301,7 +346,7 @@ def create_app(data_dir: Path | None = None):
             raise HTTPException(422, "装备部位无效")
         return require(session, WornEquipment, (character_id, slot))
 
-    def save_worn(session, account_id, worn, config_id, expected_version):
+    def save_worn(session, account_id, worn, config_id, expected_version, intent=None, fingerprint=None):
         before = dump(worn)
         result = session.execute(update(WornEquipment).where(
             WornEquipment.character_id == worn.character_id, WornEquipment.slot == worn.slot,
@@ -311,28 +356,39 @@ def create_app(data_dir: Path | None = None):
             raise HTTPException(409, "此格装备已在其他页面修改，请关闭编辑并刷新后重试")
         session.expire(worn)
         audit(session, "replace_equipment", f"{worn.character_id}:{worn.slot}", before, dump(worn), account_id)
+        result = {"version": worn.version}
+        if intent is not None:
+            return finish_creation(session, intent, fingerprint, result)
         session.commit()
-        return {"version": worn.version}
+        return result
 
     @app.put("/api/accounts/{account_id}/characters/{character_id}/equipment/{slot}")
-    def equip(account_id: str, character_id: str, slot: str, payload: EquipInput, session: Session = DB):
+    def equip(account_id: str, character_id: str, slot: str, payload: EquipInput, session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, f'equipment:{account_id}:{character_id}:{slot}', payload)
+        if replay is not None:
+            return replay
         worn = writable_slot(session, account_id, character_id, slot)
         template = require(session, Template, payload.template_id) if payload.template_id else create_template(session, payload.equipment)
         if template.equipment_type != equipment_type(slot):
             raise HTTPException(422, "装备模板与角色部位不匹配")
         config = create_config(session, template, payload.choices)
-        return save_worn(session, account_id, worn, config.id, payload.expected_version)
+        return save_worn(session, account_id, worn, config.id, payload.expected_version, payload, fingerprint)
 
     @app.delete("/api/accounts/{account_id}/characters/{character_id}/equipment/{slot}")
-    def clear_equipment(account_id: str, character_id: str, slot: str, expected_version: int = Query(ge=0), session: Session = DB):
+    def clear_equipment(account_id: str, character_id: str, slot: str, payload: MutationInput | None = None, expected_version: int = Query(ge=0), session: Session = WRITE):
+        fingerprint, replay = begin_creation(session, f'clear_equipment:{account_id}:{character_id}:{slot}:{expected_version}', payload) if payload else (None, None)
+        if replay is not None:
+            return replay
         worn = writable_slot(session, account_id, character_id, slot)
-        return save_worn(session, account_id, worn, None, expected_version)
+        return save_worn(session, account_id, worn, None, expected_version, payload, fingerprint)
 
     app.include_router(make_inventory_router(engine, database))
     app.include_router(make_batch_router(engine))
     app.include_router(make_cycle_data_router(engine, database))
     app.include_router(make_growth_router(engine, database))
     app.include_router(make_data_router(engine, database))
+    app.include_router(make_management_router(engine))
+    app.include_router(make_raid_router(engine))
 
     @app.get("/api/{path:path}", include_in_schema=False)
     def unknown_api(path: str):

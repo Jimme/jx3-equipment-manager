@@ -27,7 +27,9 @@ def prepare(session, account_id, character_id, payload):
     character = require(session, Character, character_id)
     if character.account_id != account_id or character.archived:
         raise HTTPException(409, '角色已移除或不属于当前账号')
-    state = {'account': dump(account), 'character': dump(character), 'worn': [], 'stock': {}, 'cycles': {}}
+    state = {'account': {'id': account.id, 'archived': account.archived},
+             'character': {'id': character.id, 'account_id': character.account_id, 'archived': character.archived},
+             'worn': [], 'stock': {}, 'cycles': {}}
     rows, changes, needed = [], [], Counter()
     for entry in payload.rows:
         worn = writable_slot(session, account_id, character_id, entry.slot)

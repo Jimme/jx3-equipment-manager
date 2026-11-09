@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from .cycle_data import SPECS, validate_rows
-from .database import backup_database, make_engine, migrate
+from .database import backup_database, make_engine, migrate, remove_snapshot
 from .domain import SLOT_KEYS, equipment_type
 from .drop_merge import merge_drop_rows
 from .models import Base, DataChangePreview
@@ -30,7 +30,7 @@ TRANSIENT = {'cycle_change_previews', 'data_change_previews'}
 TABLES = [table for table in Base.metadata.sorted_tables if table.name not in TRANSIENT]
 TABLE_MAP = {table.name: table for table in TABLES}
 FORMAT = 'jx3-equipment-workspace'
-REVISION = '0009'
+REVISION = '0010'
 RAID_COLUMNS = {'raid_10', 'raid_25pt', 'raid_25yx'}
 
 
@@ -64,7 +64,7 @@ def change_summary(before, after):
               'raid_drop_notes': '团本掉落', 'raid_memo_states': '掉落状态', 'workspace_settings': '当前周期', 'audit_events': '操作历史',
               'cycle_base_stats': '基础体质', 'cycle_refine_stats': '精炼数值', 'cycle_stone_stats': '五行石数值',
               'cycle_enchants': '附魔数值', 'cycle_rainbow_stones': '五彩石数值', 'cycle_buff_thresholds': '技能阈值',
-              'mutation_receipts': '操作重试记录'}
+              'mutation_receipts': '操作重试记录', 'creation_receipts': '创建重试记录', 'raid_cd_settings': '副本重置设置'}
     result = []
     for table in TABLES:
         keys = [c.name for c in table.primary_key]
@@ -78,7 +78,7 @@ def change_summary(before, after):
 
 
 def rebase_versions(current, tables):
-    versions = [row['version'] for state in (current, tables) for rows in state.values() for row in rows if 'version' in row]
+    versions = [row[key] for state in (current, tables) for rows in state.values() for row in rows for key in ('version', 'raid_version') if key in row]
     versions.extend(state['workspace_settings'][0]['version_seed'] for state in (current, tables))
     version = max(versions, default=0) + 1
     if version > 2147483647:
@@ -89,6 +89,8 @@ def rebase_versions(current, tables):
         for row in rows:
             if 'version' in row:
                 row['version'] = version
+            if 'raid_version' in row:
+                row['raid_version'] = version
     return result
 
 
@@ -123,13 +125,32 @@ def validate_types(tables):
                     reject(f'{name} 第{index}行 {column.name}：数据类型错误')
                 elif type(value) is int and not -2147483648 <= value <= 2147483647:
                     reject(f'{name} 第{index}行 {column.name}：整数超出范围')
-                elif column.name in ('version', 'version_seed') and value < 0:
+                elif column.name in ('version', 'version_seed', 'raid_version') and value < 0:
                     reject(f'{name} 第{index}行：版本不能为负数')
                 elif isinstance(value, str) and (len(value) > 2000000 or (column.primary_key and (not value or len(value) > 100))):
                     reject(f'{name} 第{index}行 {column.name}：文字长度无效')
 
 
 def validate_business(tables):
+    settings = tables['raid_cd_settings']
+    if len(settings) != 1 or settings[0]['id'] != 1:
+        reject('副本自动重置设置必须且只能有一条')
+    for key in ('cursor_10', 'cursor_25', 'changed_at'):
+        value = settings[0][key]
+        if settings[0]['enabled'] and value is None:
+            reject('开启自动重置时缺少周期状态')
+        if value is not None:
+            try:
+                if datetime.fromisoformat(value).tzinfo is None:
+                    reject('副本重置时间必须包含时区')
+            except ValueError:
+                reject('副本重置时间格式错误')
+    for row in tables['creation_receipts']:
+        try:
+            if not re.fullmatch('[a-f0-9]{64}', row['fingerprint']) or not isinstance(json.loads(row['result']), dict):
+                reject('创建重试记录无效')
+        except (TypeError, ValueError):
+            reject('创建重试记录无效')
     def check(schema, value, context):
         try:
             result = schema.model_validate(value).model_dump()
@@ -231,11 +252,26 @@ def fill_tables(session, tables):
 def validate_document(payload, directory):
     if not isinstance(payload, dict) or set(payload) != {'format', 'format_version', 'schema_revision', 'exported_at', 'tables'}:
         reject('不是完整的工作空间 JSON 文件')
-    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', '0007', '0008', REVISION):
+    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', '0007', '0008', '0009', REVISION):
         reject('文件版本不兼容，请使用当前版本导出文件；旧数据库备份请按停机恢复说明处理')
     if not isinstance(payload['exported_at'], str):
         reject('导出时间格式无效')
     tables = payload['tables']
+    if payload['schema_revision'] != REVISION and isinstance(tables, dict):
+        old_tables = set(TABLE_MAP) - {'creation_receipts', 'raid_cd_settings'}
+        if set(tables) != old_tables:
+            reject('旧版工作空间数据表不匹配')
+        tables = copy.deepcopy(tables)
+        for name, defaults in [('game_accounts', {'version': 0}),
+                               ('characters', {'version': 0, 'raid_version': 0, 'history_complete': False})]:
+            if not isinstance(tables.get(name), list):
+                reject('旧版记录列表不匹配')
+            for row in tables[name]:
+                if not isinstance(row, dict) or any(key in row for key in defaults):
+                    reject('旧版记录字段不匹配')
+                row.update(defaults)
+        tables['creation_receipts'] = []
+        tables['raid_cd_settings'] = [{'id': 1, 'enabled': False, 'version': 0, 'cursor_10': None, 'cursor_25': None, 'changed_at': None}]
     if payload['schema_revision'] in ('0006', '0007') and isinstance(tables, dict) and isinstance(tables.get('equipment_cycles'), list):
         old_columns = {column.name for column in TABLE_MAP['equipment_cycles'].columns} - {'has_constitution_sockets'}
         cycles = []
@@ -312,15 +348,22 @@ def sqlite_document(raw, directory):
                 if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                     reject('备份完整性检查失败')
                 revisions = connection.execute('SELECT version_num FROM alembic_version').fetchall()
-                if revisions not in ([(REVISION,)], [('0008',)], [('0007',)], [('0006',)]):
+                if revisions not in ([(REVISION,)], [('0009',)], [('0008',)], [('0007',)], [('0006',)]):
                     reject('此备份不属于当前数据库版本，请按停机恢复说明使用匹配版本再升级')
                 objects = connection.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','trigger')").fetchall()
                 expected = set(Base.metadata.tables) | {'alembic_version'}
+                if revisions != [(REVISION,)]:
+                    expected -= {'creation_receipts', 'raid_cd_settings'}
                 if {r[0] for r in objects} != expected or any(kind != 'table' or 'VIRTUAL TABLE' in sql.upper() for _, kind, sql in objects):
                     reject('备份结构不匹配或包含非应用数据对象')
                 tables = {}
                 for table in TABLES:
+                    if revisions != [(REVISION,)] and table.name in ('creation_receipts', 'raid_cd_settings'):
+                        continue
                     columns = [c for c in table.columns if not (revisions == [('0006',)] and table.name == 'characters' and c.name in RAID_COLUMNS)]
+                    if revisions != [(REVISION,)]:
+                        removed = {'version'} if table.name == 'game_accounts' else {'version', 'raid_version', 'history_complete'} if table.name == 'characters' else set()
+                        columns = [c for c in columns if c.name not in removed]
                     if revisions in ([('0006',)], [('0007',)]) and table.name == 'equipment_cycles':
                         columns = [c for c in columns if c.name != 'has_constitution_sockets']
                     if {r[1] for r in connection.execute(f'PRAGMA table_info("{table.name}")')} != {c.name for c in columns}:
@@ -403,12 +446,20 @@ def make_data_router(engine, read_database):
 
     @router.delete('/backups/{filename}')
     def delete_backup(filename: str):
-        path = backup_path(filename)
         try:
-            path.unlink()
+            path = backup_path(filename)
+        except HTTPException:
+            folder = directory.resolve() / 'backups'
+            if not re.fullmatch(r'[A-Za-z0-9_-]+\.sqlite3', filename) or filename == 'app.sqlite3':
+                raise
+            path = folder / filename
+            if path.is_symlink() or path.resolve().parent != folder or not any(path.with_name(filename + suffix).is_file() for suffix in ('-wal', '-shm')):
+                raise
+        try:
+            remove_snapshot(path)
         except FileNotFoundError:
             raise HTTPException(404, '备份不存在')
-        except OSError:
+        except (OSError, sqlite3.Error, ValueError, RuntimeError):
             raise HTTPException(503, '备份删除失败，请检查目录权限或稍后重试')
         return {'name': filename}
 
@@ -482,10 +533,16 @@ def make_data_router(engine, read_database):
             for row in current['mutation_receipts']:
                 if row['account_id'] in account_ids and (row['account_id'], row['request_id']) not in receipt_keys:
                     tables['mutation_receipts'].append({**row, 'result': json.dumps({'_restored_request': True})})
+            creation_keys = {row['request_id'] for row in tables['creation_receipts']}
+            for row in current['creation_receipts']:
+                if row['request_id'] not in creation_keys:
+                    tables['creation_receipts'].append({**row, 'result': json.dumps({'_restored_request': True})})
             backup = safe_backup('before-workspace-replace')
             # Old previews must never apply against restored state.
             session.execute(delete(Base.metadata.tables['cycle_change_previews']))
             fill_tables(session, tables)
+            from .raid_cd import reconcile
+            reconcile(session)
             audit(session, 'workspace_' + token.kind, '1', summary(current), {'summary': summary(tables), 'backup': backup.name})
             result['backup'] = backup.name
             session.execute(delete(DataChangePreview).where(DataChangePreview.id != preview_id))

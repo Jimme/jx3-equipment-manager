@@ -5,8 +5,9 @@ import { api, ApiError, optionalInteger } from './api';
 import type { Cell, Character, DailyData, Data, InventoryItem, Matrix, RaidDifficulty, Run, Source, Template, Workspace } from './types';
 import { Modal } from './Modal';
 import { EquipmentForm } from './EquipmentForm';
+import { LatestEquipment } from './LatestEquipment';
 import { BatchEquipmentEditor } from './BatchEquipmentEditor';
-import { InventoryWorkspace, type InventoryDialog, type InventorySelection } from './InventoryWorkspace';
+import { InventoryWorkspace, quickTransferDrop, type InventoryDialog, type InventorySelection } from './InventoryWorkspace';
 import { WarehouseEquip } from './WarehouseEquip';
 import { choiceSummary } from './ChoicesFields';
 import { compareEquipment } from './equipmentUtils';
@@ -14,6 +15,7 @@ import { DataManager } from './DataManager';
 import { GrowthEditor } from './GrowthEditor';
 import { CycleSettings } from './CycleSettings';
 import { People } from './People';
+import { RecoveryNotice, RunContext } from './RecoveryNotice';
 import './style.css';
 
 type Editing = { character: Character; slot: string; slotName: string; cell: Cell };
@@ -96,6 +98,13 @@ function App() {
 
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
   useEffect(() => {
+    if (!data?.workspace.raid_cd.enabled) return;
+    const timer = window.setInterval(() => {
+      if (!pendingRef.current) void load(selectedAccount.current).catch(e => setError(e.message));
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [data?.workspace.raid_cd.enabled]);
+  useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(''), 4000);
     return () => window.clearTimeout(timer);
@@ -121,7 +130,7 @@ function App() {
       close?.(); setNotice(success);
       return true;
     } catch (e) {
-      if (e instanceof ApiError && e.refreshRequired) {
+      if (e instanceof ApiError && (e.refreshRequired || e.status === 409 || e.status === 404)) {
         try { await load(selectedAccount.current); } catch { /* The saved operation remains recoverable by an explicit refresh. */ }
       }
       const message = e instanceof Error ? e.message : '操作失败，请重试';
@@ -153,19 +162,21 @@ function App() {
 
   async function setRaidCheck(character: Character, difficulty: RaidDifficulty, checked: boolean) {
     if (pendingRef.current) return;
-    function showCheck(cleared: boolean) {
-      const update = (row: Character) => row.id === character.id ? { ...row, [`raid_${difficulty}`]: cleared } : row;
+    function showCheck(cleared: boolean, version = character.raid_version) {
+      const update = (row: Character) => row.id === character.id ? { ...row, [`raid_${difficulty}`]: cleared, raid_version: version } : row;
       setData(previous => {
         if (!previous?.matrix || previous.accountId !== character.account_id) return previous;
         return { ...previous, characters: previous.characters.map(update), matrix: { ...previous.matrix, characters: previous.matrix.characters.map(update) } };
       });
     }
     showCheck(checked);
-    const saved = await run(() => api(
+    const saved = await run(async () => {
+      const result = await api<{cleared: boolean; raid_version: number}>(
       `/accounts/${character.account_id}/characters/${character.id}/raid-checks/${difficulty}`,
-      'PUT', { cleared: checked },
-    ), '', undefined, false);
-    if (!saved) showCheck(character[`raid_${difficulty}`]);
+      'PUT', { cleared: checked, expected_version: character.raid_version, period: data!.workspace.raid_cd[difficulty === '10' ? 'period_10' : 'period_25'] });
+      showCheck(result.cleared, result.raid_version);
+    }, '', undefined, false);
+    if (!saved) { try { await load(character.account_id); } catch { showCheck(character[`raid_${difficulty}`]); } }
   }
 
   if (!data) return <main className="loading"><h1>剑网三 · 坦克装备簿</h1>{error ? <><p role="alert">{error}</p><button onClick={() => { setError(''); void refresh(); }}>重试连接</button></> : <p>正在打开装备簿…</p>}</main>;
@@ -183,11 +194,13 @@ function App() {
     document.getElementById('inventory')?.scrollIntoView({ block: 'nearest' });
   }
 
-  return <main>
+  return <RunContext.Provider value={run}><main>
     <header className="masthead">
       <div className="app-heading"><h1>坦克装备簿</h1>{notice && !panel && <span role="status" className="app-notice">{notice}</span>}</div>
       <div className="header-actions"><button onClick={refresh} disabled={pending}>刷新</button><button onClick={()=>{setError('');setPanel('data');}}>数据与备份</button><button onClick={() => setPanel('sources')}>周期与来源</button><button className="primary" onClick={() => setPanel('people')}>账号与角色</button></div>
     </header>
+    {!panel && !editing && !growthCharacter && !batchCharacter && !inventoryDialog && <RecoveryNotice/>}
+    {workspace.raid_cd.clock_warning && <p role="alert" className="message error">服务时间异常，自动重置与进度修改已暂停，请核对服务器时钟。</p>}
     {error && !panel && !editing && <div role="alert" className="message error">{error}</div>}
     <section className="toolbar" aria-label="装备比较设置">
       <label>账号<select aria-label="游戏账号" value={accountId} disabled={pending} onChange={e => { const id = e.target.value; void run(() => load(id), '', undefined, false); }}>
@@ -246,13 +259,13 @@ function App() {
           return Array.from({ length: stockWidths[key] }, (_, index) => {
             const item = items[index];
             return <td className="stock-cell" key={`${key}-${index}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
-            <button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${index + 1}`} onClick={() => {
+            <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${index + 1}`} onClick={() => {
               setError(''); setInventoryDialog({ kind: 'edit', target: key, item, requestId: newRequestId() });
             }}>
               <span className="stock-main">{item.label} · {item.equipment.actual_grade} · ×{item.quantity}</span>
               <small className="stock-details">{choiceSummary(item.choices, equipmentType === 'weapon')}</small>
               {slot.key === 'ring1' && <small>两格通用</small>}
-            </button> :
+            </button>{key === 'drops' && <button className="stock-quick" disabled={pending} aria-label={`一键入库${slot.name}掉落配置${index + 1}`} onClick={() => quickTransferDrop(item, run)}>入库 ×{item.quantity}</button>}</> :
             index === items.length ? <button className="stock-entry" aria-label={`${slot.name}：${addLabel}`} disabled={pending || !cycleId} onClick={() => { setError(''); setInventoryDialog({ kind: 'add', target: key, equipmentType, requestId: newRequestId() }); }}>＋{slot.key === 'ring1' && <small>两格通用</small>}</button> : null}
           </td>;
           });
@@ -260,7 +273,7 @@ function App() {
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.10</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.11</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
@@ -278,13 +291,14 @@ function App() {
       {error && <p role="alert" className="message error">{error}</p>}
       <EquipmentEditor data={data} editing={editing} pending={pending} run={run} close={closeEquipment} savedClose={dismissEquipment} onDirty={setEquipmentDirty} lastEquipment={lastEquipment} saved={setLastEquipment}/>
     </Modal>}
-  </main>;
+  </main></RunContext.Provider>;
 }
 
 function EquipmentEditor({ data, editing, pending, run, close, savedClose, onDirty, lastEquipment, saved }: { data: Data; editing: Editing; pending: boolean; run: Run; close: () => void; savedClose: () => void; onDirty: (dirty: boolean) => void; lastEquipment: Template | null; saved: (t: Template) => void }) {
+  const [baseline, setBaseline] = useState(editing.cell);
   const type = editing.slot.startsWith('ring') ? 'ring' : editing.slot;
   const stock = data.daily!.warehouse.filter(item => item.equipment.equipment_type === type);
-  const [mode, setMode] = useState<'record' | 'new' | 'warehouse'>(() => !editing.cell.equipment && stock.length > 0 ? 'warehouse' : 'record');
+  const [mode, setMode] = useState<'record' | 'new' | 'warehouse'>(() => !baseline.equipment && stock.length > 0 ? 'warehouse' : 'record');
   const [selectedId, setSelectedId] = useState(stock[0]?.id ?? '');
   const [requestId, setRequestId] = useState(() => newRequestId());
   const dirty = useRef(false);
@@ -294,16 +308,17 @@ function EquipmentEditor({ data, editing, pending, run, close, savedClose, onDir
     if (dirty.current && !window.confirm('切换录入方式会丢弃当前输入，确定继续？')) return;
     setDirty(false); setMode(next);
   }
-  const path = `/accounts/${data.accountId}/characters/${editing.character.id}/equipment/${editing.slot}`;
-  const editingExisting = mode === 'record' && !!editing.cell.equipment;
+  const path = `/accounts/${editing.character.account_id}/characters/${editing.character.id}/equipment/${editing.slot}`;
+  const editingExisting = mode === 'record' && !!baseline.equipment;
   const selected = stock.find(item => item.id === selectedId);
-  const form = <EquipmentForm key={mode} data={data} type={type} current={editingExisting ? editing.cell.equipment : null} initialChoices={editingExisting ? editing.cell.choices : null} allowCopy={!editingExisting} pending={pending} run={run} close={close} savedClose={savedClose} onDirty={setDirty} lastEquipment={lastEquipment}
+  const form = <EquipmentForm key={mode} data={data} type={type} current={editingExisting ? baseline.equipment : null} initialChoices={editingExisting ? baseline.choices : null} allowCopy={!editingExisting} pending={pending} run={run} close={close} savedClose={savedClose} onDirty={setDirty} lastEquipment={lastEquipment}
     submitLabel={mode === 'new' ? '确认更换装备' : editingExisting ? '保存记录' : '保存装备'}
-    description={mode === 'new' ? '录入新装备；旧装备不回库，附魔和五彩石不继承。' : editing.cell.equipment ? [editing.cell.label, `${editing.cell.equipment.actual_grade}品`, ...editing.cell.reasons].join(' · ') : undefined}
-    onSave={async (equipment, choices) => { await api(path, 'PUT', { expected_version: editing.cell.version, equipment, choices }); saved({ ...equipment, id: '', actual_grade: equipment.actual_grade! }); }}
-    actions={editingExisting && <button type="button" className="danger" onClick={() => { if (window.confirm('清除此格当前装备？旧装备不进入仓库。')) void run(() => api(`${path}?expected_version=${editing.cell.version}`, 'DELETE'), '已清除穿戴', savedClose); }}>清除穿戴</button>}/>;
+    description={mode === 'new' ? '录入新装备；旧装备不回库，附魔和五彩石不继承。' : baseline.equipment ? [baseline.label, `${baseline.equipment.actual_grade}品`, ...baseline.reasons].join(' · ') : undefined}
+    onSave={async (equipment, choices) => { await api(path, 'PUT', { request_id: requestId, expected_version: baseline.version, equipment, choices }); saved({ ...equipment, id: '', actual_grade: equipment.actual_grade! }); }}
+    actions={editingExisting && <button type="button" className="danger" onClick={() => { if (window.confirm('清除此格当前装备？旧装备不进入仓库。')) void run(() => api(`${path}?expected_version=${baseline.version}`, 'DELETE', { request_id: newRequestId() }), '已清除穿戴', savedClose); }}>清除穿戴</button>}/>;
   return <>
-    {(stock.length > 0 || editing.cell.equipment) && <div className="menu-tabs"><button type="button" disabled={pending} aria-pressed={mode === 'record'} onClick={() => changeMode('record')}>{editing.cell.equipment ? '编辑当前记录' : '手动录入'}</button>{editing.cell.equipment && <button type="button" disabled={pending} aria-pressed={mode === 'new'} onClick={() => changeMode('new')}>手动换装</button>}{stock.length > 0 && <button type="button" disabled={pending} aria-pressed={mode === 'warehouse'} onClick={() => changeMode('warehouse')}>从仓库穿戴（{stock.length} 种）</button>}</div>}
+    <LatestEquipment accountId={editing.character.account_id} characterId={editing.character.id} slot={editing.slot} run={run} pending={pending} accept={setBaseline}/>
+    {(stock.length > 0 || baseline.equipment) && <div className="menu-tabs"><button type="button" disabled={pending} aria-pressed={mode === 'record'} onClick={() => changeMode('record')}>{baseline.equipment ? '编辑当前记录' : '手动录入'}</button>{baseline.equipment && <button type="button" disabled={pending} aria-pressed={mode === 'new'} onClick={() => changeMode('new')}>手动换装</button>}{stock.length > 0 && <button type="button" disabled={pending} aria-pressed={mode === 'warehouse'} onClick={() => changeMode('warehouse')}>从仓库穿戴（{stock.length} 种）</button>}</div>}
     {mode !== 'warehouse' ? form : <>
       {stock.length > 1 && <div className="warehouse-picker" role="radiogroup" aria-label="选择仓库装备">{stock.map(item => <label className={`warehouse-option ${item.id === selectedId ? 'selected' : ''}`} key={item.id}><input type="radio" name="warehouse-item" checked={selectedId === item.id} disabled={pending} onChange={() => { if (dirty.current && !window.confirm('更换仓库装备会丢弃本件附加配置输入，确定继续？')) return; setSelectedId(item.id); setRequestId(newRequestId()); }}/><span><strong>{item.label} · {item.equipment.actual_grade} 品 · {item.quantity} 件</strong><small>{choiceSummary(item.choices, type === 'weapon')}</small></span></label>)}</div>}
       {selected && <WarehouseEquip key={selected.id} data={data} item={selected} requestId={requestId} initialCharacter={editing.character.id} initialSlot={editing.slot} fixedTarget targetInTitle run={run} pending={pending} close={close} savedClose={savedClose} onDirty={setDirty}/>}

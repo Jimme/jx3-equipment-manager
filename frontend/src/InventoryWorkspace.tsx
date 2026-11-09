@@ -16,6 +16,16 @@ function equipmentName(data: Data, type: string) {
   return type === 'ring' ? '戒指' : data.workspace.slots.find(s => s.key === type)?.name ?? type;
 }
 
+export function quickTransferDrop(item: InventoryItem, run: Run, close?: () => void) {
+  let explained = false;
+  try { explained = localStorage.getItem('jx3-drop-transfer-explained') === 'yes'; } catch { /* Optional storage. */ }
+  if (!explained && !window.confirm(`一键入库表示确认已获得且仍可共享。本次转入「${item.label}」全部 ${item.quantity} 件；只获得部分时请用「转入部分…」。确认入库？`)) return;
+  try { localStorage.setItem('jx3-drop-transfer-explained', 'yes'); } catch { /* Explain again without storage. */ }
+  void run(() => api(`/accounts/${item.account_id}/drops/${item.id}/transfer`, 'POST', {
+    request_id: newRequestId(), expected_version: item.version, quantity: item.quantity,
+  }), `已入库 ${item.quantity} 件`, close);
+}
+
 export function InventoryWorkspace({ data, run, pending, error, selection, setSelection, dialog, setDialog }: {
   data: Data; run: Run; pending: boolean; error: string;
   selection: InventorySelection | null; setSelection: (selection: InventorySelection | null) => void;
@@ -29,6 +39,8 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const [historyError, setHistoryError] = useState('');
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [selectedDrops, setSelectedDrops] = useState<Record<string, number>>({});
+  useEffect(() => setSelectedDrops({}), [tab, equipmentType]);
   const daily = data.daily!;
   const path = `/accounts/${data.accountId}`;
   useEffect(() => {
@@ -37,9 +49,6 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const dismiss = () => { setDirty(false); setDialog(null); };
   const close = () => {
     if (pending) return;
-    if (dialog && isMutationUncertain(dialog.requestId)) {
-      window.alert('这笔操作的结果尚未核对，请先原样重试保存，避免重新录入时重复增加数量。'); return;
-    }
     if (dirty && !window.confirm('本次装备输入还没保存，关闭会丢弃。确定关闭？')) return;
     dismiss();
   };
@@ -63,6 +72,18 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const stockTab = tab === 'warehouse' || tab === 'drops' ? tab : null;
   const stock = stockTab ? daily[stockTab] : [];
   const items = equipmentType ? stock.filter(item => item.equipment.equipment_type === equipmentType) : stock;
+  function deleteItem(item: InventoryItem, target: StockTarget) {
+    const current = daily[target].find(row => row.id === item.id);
+    if (!current) { void run(async () => { throw new Error('记录已移除，请核对最新列表'); }); return; }
+    const label = target === 'warehouse' ? '库存' : '掉落';
+    if (!window.confirm(`删除${label}「${current.label} · ${current.equipment.actual_grade} 品」全部 ${current.quantity} 件？${choiceSummary(current.choices, current.equipment.equipment_type === 'weapon')}。角色穿戴不变。${dirty ? '本次未保存的更正草稿会放弃。' : ''}`)) return;
+    void run(() => api(`${path}/${target}/${current.id}/quantity`, 'POST', {
+      request_id: newRequestId(), expected_version: current.version, quantity: 0,
+    }), `已删除${label}`, dialog ? dismiss : undefined);
+  }
+  function transferAll(item: InventoryItem) {
+    quickTransferDrop(item, run, dialog ? dismiss : undefined);
+  }
   const warehouseById = useMemo(() => new Map(daily.warehouse.map(item => [item.id, item])), [daily.warehouse]);
   const visibleGaps = useMemo(() => tab === 'gaps' ? daily.gaps.filter(gap =>
     (!characterFilter || gap.character_id === characterFilter) && (!improvementsOnly || gap.candidate_ids.length > 0)
@@ -82,6 +103,17 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
     </div>
     <div className="daily-content" id="daily-panel" role="region" aria-label="装备明细" hidden={!tab}>
       {(tab === 'warehouse' || tab === 'drops') && <>
+        {tab === 'drops' && items.length > 0 && <div className="batch-toolbar">
+          <button disabled={pending} onClick={() => setSelectedDrops(Object.fromEntries(items.map(item => [item.id, item.version])))}>选择当前筛选结果</button>
+          <button disabled={pending || !Object.keys(selectedDrops).length} onClick={() => setSelectedDrops({})}>取消选择</button>
+          <button className="primary" disabled={pending || !Object.keys(selectedDrops).length || Object.keys(selectedDrops).some(id => !items.some(item => item.id === id))} onClick={() => {
+            const chosen = items.filter(item => item.id in selectedDrops);
+            const quantity = chosen.reduce((sum, item) => sum + item.quantity, 0);
+            if (!window.confirm(`确认已获得并入库所选 ${chosen.length} 种配置，共 ${quantity} 件？\n${chosen.map(item => `${item.label} ${item.equipment.actual_grade} 品 ×${item.quantity}，${choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}`).join('\n')}\n其他及隐藏掉落不变；任一冲突整批不保存。`)) return;
+            void run(() => api(`${path}/drops/batch-transfer`, 'POST', { request_id: newRequestId(), rows: Object.entries(selectedDrops).map(([id, version]) => ({ id, expected_version: version })) }), '所选掉落已整批入库', () => setSelectedDrops({}));
+          }}>所选一键入库 · {Object.keys(selectedDrops).length} 项</button>
+          {Object.keys(selectedDrops).some(id => !items.some(item => item.id === id)) && <span className="error">选中项已移除，请重新核对选择。</span>}
+        </div>}
         {!data.cycleId && <p className="hint">请先在“周期与来源”中创建装备周期。</p>}
         {items.length === 0 ? <p className="small-empty">{tab === 'warehouse' ? '共享仓库还没有库存。' : '本次还没有记录掉落。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>装备</th><th>数量</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
           <td><strong>{!equipmentType && `${equipmentName(data, item.equipment.equipment_type)} · `}{item.label} · {item.equipment.actual_grade} 品</strong>
@@ -90,7 +122,11 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
           <td><div className="button-row">
             <button disabled={pending} onClick={() => setDialog({ kind: 'edit', target: stockTab!, item, requestId: newRequestId() })}>编辑</button>
-            {tab === 'warehouse' ? <button disabled={pending || !data.matrix!.characters.length} onClick={() => equip(item)}>给角色穿戴</button> : <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入仓库</button>}
+            {tab === 'warehouse' ? <button disabled={pending || !data.matrix!.characters.length} onClick={() => equip(item)}>给角色穿戴</button> : <>
+              <label className="check"><input type="checkbox" aria-label={`选择掉落${item.label} ${item.equipment.actual_grade}品`} checked={item.id in selectedDrops} onChange={e => setSelectedDrops(old => { const next = { ...old }; if (e.target.checked) next[item.id] = item.version; else delete next[item.id]; return next; })}/>选择</label>
+              <button disabled={pending} onClick={() => transferAll(item)}>一键入库 · {item.quantity} 件</button>
+              <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入部分…</button>
+            </>}
             <button className="danger" disabled={pending} onClick={() => {
               const label = tab === 'warehouse' ? '库存' : '掉落';
               if (!window.confirm(`删除${label}「${item.label} · ${item.equipment.actual_grade} 品」的 ${item.quantity} 件记录？`)) return;
@@ -118,12 +154,15 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
     </div>
     {dialog && <Modal title={modalTitle} close={close} busy={pending} compact>{error && <p role="alert" className="message error">{error}</p>}
       {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
-      {dialog.kind === 'edit' && <EditInventory key={dialog.requestId} data={data} target={dialog.target} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty} actions={<button type="button" disabled={pending || (dialog.target === 'warehouse' && !data.matrix!.characters.length)} onClick={() => {
+      {dialog.kind === 'edit' && <EditInventory key={dialog.requestId} data={data} target={dialog.target} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty} actions={<>
+        <button type="button" className="danger" disabled={pending} onClick={() => deleteItem(dialog.item, dialog.target)}>{dialog.target === 'warehouse' ? '删除库存' : '删除掉落'}</button>
+        {dialog.target === 'drops' && <button type="button" disabled={pending} onClick={() => { if (!dirty || window.confirm('入库将放弃本次更正草稿，确认使用已保存配置入库？')) transferAll(dialog.item); }}>一键入库 · {dialog.item.quantity} 件</button>}
+        <button type="button" disabled={pending || (dialog.target === 'warehouse' && !data.matrix!.characters.length)} onClick={() => {
         if (isMutationUncertain(dialog.requestId)) { window.alert('请先原样重试保存，核对上一笔结果后再切换操作。'); return; }
         if (dirty && !window.confirm('切换操作会丢弃当前更正输入，确定继续？')) return;
         setDirty(false);
         setDialog({ kind: dialog.target === 'warehouse' ? 'equip' : 'transfer', item: dialog.item, requestId: newRequestId() });
-      }}>{dialog.target === 'warehouse' ? '给角色穿戴' : '转入仓库'}</button>}/>}
+      }}>{dialog.target === 'warehouse' ? '给角色穿戴' : '转入部分…'}</button></>}/>}
       {dialog.kind === 'equip' && <WarehouseEquip key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} initialCharacter={dialog.characterId} initialSlot={dialog.slot} fixedTarget={!!dialog.characterId && !!dialog.slot} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
       {dialog.kind === 'transfer' && <DropTransfer key={dialog.requestId} data={data} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
     </Modal>}
@@ -172,10 +211,20 @@ function EditInventory({ data, target, item, requestId, run, pending, close, sav
 
 function DropTransfer({ data, item, requestId, run, pending, close, savedClose, onDirty }: ActionProps & { item: InventoryItem }) {
   const [quantity, setQuantity] = useState('1');
+  const [baseline, setBaseline] = useState(item);
+  const [latest, setLatest] = useState<InventoryItem | null>(null);
   useEffect(() => { onDirty(quantity !== '1'); return () => onDirty(false); }, [quantity, onDirty]);
-  return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${data.accountId}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: item.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', savedClose); }}><fieldset disabled={pending}>
-    <p className="hint">{equipmentName(data, item.equipment.equipment_type)} · {item.label} · {item.equipment.actual_grade} 品，本次记录 {item.quantity} 件。</p>
-    {item.quantity > 1 && <label>实际获得的数量<input aria-label="实际获得的数量" required type="number" min="1" max={item.quantity} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>}
+  return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${item.account_id}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: baseline.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', savedClose); }}><fieldset disabled={pending}>
+    <button type="button" onClick={() => void run(async () => {
+      const daily = await api<{drops: InventoryItem[]}>(`/accounts/${item.account_id}/daily?skip_unconfigured_gaps=true`);
+      const current = daily.drops.find(row => row.id === item.id);
+      if (!current) throw new Error('这条掉落已移除，输入保留，请核对后退出');
+      setLatest(current);
+    }, '', undefined, false)}>读取最新记录核对</button>
+    {latest && <p className="replacement-note">最新掉落 {latest.quantity} 件；转入数量输入仍保留。
+      <button type="button" onClick={() => { setBaseline(latest); setLatest(null); }}>保留输入并采用最新版本</button></p>}
+    <p className="hint">{equipmentName(data, baseline.equipment.equipment_type)} · {baseline.label} · {baseline.equipment.actual_grade} 品，本次记录 {baseline.quantity} 件。</p>
+    {baseline.quantity > 1 && <label>实际获得的数量<input aria-label="实际获得的数量" required type="number" min="1" max={baseline.quantity} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>}
     <p className="replacement-note">确认这件装备已分配给自己、仍可共享。对应数量会从备忘中移除。</p>
     <div className="dialog-actions"><button type="button" onClick={close}>取消</button><button className="primary">确认转入</button></div>
   </fieldset></form>;

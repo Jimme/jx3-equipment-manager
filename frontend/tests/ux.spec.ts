@@ -79,7 +79,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await request.post(`${prefix}/drops`, { data: { request_id: crypto.randomUUID(), equipment: bad, quantity: 1 } });
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await page.getByRole('button', { name: '团本掉落', exact: true }).click();
-  await page.getByRole('button', { name: '转入仓库', exact: true }).click();
+  await page.getByRole('button', { name: '转入部分…', exact: true }).click();
   await expect(dialog.getByLabel('实际获得的数量')).toHaveCount(0);
   await dialog.screenshot({ path: '../.tools/screenshots/ux-single-drop.png' });
   await dialog.getByRole('button', { name: '确认转入', exact: true }).click();

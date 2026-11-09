@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .domain import socket_applicable, SLOTS, compare, equipment_type, label
 from .models import AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
-from .schemas import DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseEquip
+from .schemas import DropBatchTransfer, DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseEquip
 from .services import (BASE_STAT_MATCH, active_account, choices_for, create_config, create_template, dump,
                        new_id, replace_worn, require, template_snapshot, template_view, writable_slot)
 
@@ -290,6 +290,28 @@ def make_inventory_router(engine, read_database):
         return finish_operation(session, account_id, 'drop_quantity', note.id, payload, fingerprint, before, after,
                                 f"掉落数量 {before['quantity']} → {payload.quantity}；仓库不变", {'quantity': payload.quantity})
 
+    @router.post('/drops/batch-transfer')
+    def drops_batch_transfer(account_id: str, payload: DropBatchTransfer, session: Session = WRITE):
+        fingerprint, replay = start_operation(session, account_id, 'drops_batch_transfer', payload)
+        if replay is not None:
+            return replay
+        notes = []
+        for entry in payload.rows:
+            note = owned(session, RaidDrop, account_id, entry.id)
+            check_version(note.version, entry.expected_version)
+            notes.append(note)
+        before, after = [], []
+        total = sum(note.quantity for note in notes)
+        for note in notes:
+            stock, old = add_stock(session, account_id, note.config_id, note.quantity)
+            before.append({'drop': dump(note), 'warehouse': old})
+            after.append({'warehouse': dump(stock)})
+            session.delete(note)
+        memo_state(session, account_id).version += 1
+        return finish_operation(session, account_id, 'drops_batch_transfer', account_id, payload, fingerprint,
+                                before, after, f'所选 {len(notes)} 种配置，共 {total} 件已入库；其他掉落不变',
+                                {'configurations': len(notes), 'quantity': total})
+
     @router.post('/drops/{note_id}/transfer')
     def drop_transfer(account_id: str, note_id: str, payload: DropTransfer, session: Session = WRITE):
         fingerprint, replay = start_operation(session, account_id, f'drop_transfer:{note_id}', payload)
@@ -329,7 +351,7 @@ def make_inventory_router(engine, read_database):
     @router.get('/history')
     def history(account_id: str, session: Session = DB):
         active_account(session, account_id)
-        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'drop_merge_migration': '归并相同掉落'}
+        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'drop_merge_migration': '归并相同掉落', 'drops_batch_transfer': '所选掉落一键入库', 'raid_check': '副本进度更新'}
         rows = list(session.scalars(select(AuditEvent).where(AuditEvent.account_id == account_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id).limit(50)))
         cycle_sockets = dict(session.execute(select(Cycle.id, Cycle.has_constitution_sockets)).all())
         snapshots = {row.id: json.loads(row.snapshots) for row in rows}
@@ -371,6 +393,12 @@ def make_inventory_router(engine, read_database):
                 before, after = snapshot['before'], snapshot['after']
                 name = names.get(before['character_id'], '历史角色')
                 summary = f"{name}的{dict(SLOTS)[before['slot']]}：{equipment_name(before['config_id'])} → {equipment_name(after['config_id'])}；旧装备不回库"
+            elif row.operation == 'raid_check':
+                before, after = snapshot['before'], snapshot['after']
+                changes = [name + ('：已完成' if after[key] else '：未完成') for key, name in [('raid_10', '10人'), ('raid_25pt', '25pt'), ('raid_25yx', '25yx')] if before[key] != after[key]]
+                summary = f"{names.get(row.entity_id, after.get('name', '历史角色'))}：{'，'.join(changes)}"
+            elif row.operation == 'equipment_batch':
+                summary = f"{names.get(row.entity_id, '历史角色')}：{summary}"
             elif row.operation == 'character_growth':
                 summary = f'{names.get(row.entity_id, "历史角色")}：更新部位精炼、五行石或体质计算口径；穿戴与库存不变'
             elif row.operation == 'warehouse_equip':

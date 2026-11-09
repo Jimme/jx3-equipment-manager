@@ -32,6 +32,7 @@ class Account(Base):
     archived: Mapped[bool] = mapped_column(default=False)
     target_grade: Mapped[int | None] = mapped_column(Integer)
     comparison_mode: Mapped[str] = mapped_column(String, default="strict")
+    version: Mapped[int] = mapped_column(Integer, default=0)
     __table_args__ = (
         CheckConstraint("target_grade IS NULL OR target_grade > 0", name="ck_game_accounts_target_grade"),
         CheckConstraint("comparison_mode IN ('strict', 'grade', 'combined')", name="ck_game_accounts_comparison_mode"),
@@ -48,6 +49,27 @@ class Character(Base):
     raid_10: Mapped[bool] = mapped_column(default=False, server_default="0")
     raid_25pt: Mapped[bool] = mapped_column(default=False, server_default="0")
     raid_25yx: Mapped[bool] = mapped_column(default=False, server_default="0")
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    raid_version: Mapped[int] = mapped_column(Integer, default=0)
+    history_complete: Mapped[bool] = mapped_column(default=True)
+
+
+class CreationReceipt(Base):
+    __tablename__ = 'creation_receipts'
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String)
+    result: Mapped[str] = mapped_column(Text)
+
+
+class RaidCDSetting(Base):
+    __tablename__ = 'raid_cd_settings'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    cursor_10: Mapped[str | None] = mapped_column(String)
+    cursor_25: Mapped[str | None] = mapped_column(String)
+    changed_at: Mapped[str | None] = mapped_column(String)
+    __table_args__ = (CheckConstraint('id = 1'), CheckConstraint('version >= 0'))
 
 
 class Source(Base):

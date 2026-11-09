@@ -15,16 +15,34 @@ class NamedInput(Input):
     name: Name
     sort_order: Annotated[int, Field(strict=True, ge=0, le=100000)] = 0
     archived: bool = False
+    expected_version: Nonnegative | None = None
+    request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+
+
+class ManagementPatch(Input):
+    expected_version: Nonnegative
+    request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+    name: Name | None = None
+    sort_order: Annotated[int, Field(strict=True, ge=0, le=100000)] | None = None
+    archived: Annotated[bool, Field(strict=True)] | None = None
+
+
+class RaidCDInput(Input):
+    enabled: Annotated[bool, Field(strict=True)]
+    expected_version: Nonnegative
 
 
 class RaidCheckInput(Input):
     cleared: Annotated[bool, Field(strict=True)]
+    expected_version: Nonnegative | None = None
+    period: str | None = None
 
 
 class CycleInput(Input):
     name: Name
     expected_version: Nonnegative | None = None
     has_constitution_sockets: Annotated[bool, Field(strict=True)] | None = None
+    request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
 
 
 class ActiveCycle(Input):
@@ -47,6 +65,7 @@ class SourceInput(Input):
     short_label: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=12)]
     default_grade: Grade | None = None
     expected_version: Nonnegative | None = None
+    request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
 
 
 class TemplateInput(Input):
@@ -66,6 +85,7 @@ class TemplateInput(Input):
 
 class EquipInput(Input):
     expected_version: Nonnegative
+    request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
     template_id: str | None = None
     equipment: TemplateInput | None = None
     choices: 'EquipmentChoices | None' = None
@@ -200,6 +220,21 @@ class DropTransfer(MutationInput):
 
 class DropClear(MutationInput):
     expected_version: Nonnegative
+
+
+class DropBatchRow(Input):
+    id: str
+    expected_version: Nonnegative
+
+
+class DropBatchTransfer(MutationInput):
+    rows: Annotated[list[DropBatchRow], Field(min_length=1, max_length=1000)]
+
+    @model_validator(mode='after')
+    def unique_rows(self):
+        if len({row.id for row in self.rows}) != len(self.rows):
+            raise ValueError('同一掉落不能重复选择')
+        return self
 
 
 EquipInput.model_rebuild()

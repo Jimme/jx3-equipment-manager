@@ -34,6 +34,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
     base_constitution_override: t?.base_constitution_override?.toString() ?? '', name: t?.name ?? '', note: t?.note ?? '',
   });
   const [fields, setFields] = useState(() => fieldsFor(current));
+  const gradeManual = useRef(!!current);
   const [choices, setChoices] = useState(() => draftChoices(initialChoices));
   const initial = useRef(JSON.stringify([fields, choices]));
   const dirty = extraDirty || JSON.stringify([fields, choices]) !== initial.current;
@@ -94,6 +95,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
   function copyEquipment(equipment: Template) {
     if (dirty && !window.confirm('复制会替换本次未保存的录入，确定继续？')) return;
     setFields(fieldsFor(equipment));
+    gradeManual.current = true;
     setSourceChoice('saved');
     setChoices(draftChoices());
   }
@@ -119,9 +121,11 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
         <label>装备来源<select aria-label="来源预设" required value={fields.source_id || sourceChoice} onChange={e => {
           const s = sources.find(s => s.id === e.target.value);
           setSourceChoice(s ? '' : e.target.value);
-          setFields(s ? { ...fields, source_id: s.id, source_type: s.source_type, source_name: s.name, short_label: s.short_label, actual_grade: s.default_grade?.toString() ?? '' } : { ...fields, source_id: '' });
+          setFields(s ? { ...fields, source_id: s.id, source_type: s.source_type, source_name: s.name, short_label: s.short_label, actual_grade: fields.actual_grade && gradeManual.current ? fields.actual_grade : s.default_grade?.toString() ?? '' } : { ...fields, source_id: '' });
         }}><option value="">请选择来源</option>{(current || sourceChoice === 'saved') && <option value="saved">{fields.source_name}（保留已录信息）</option>}{sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}<option value="manual">其他来源，手动填写</option></select></label>
-        <label>真实品级<input aria-label="真实品级" required type="number" min="1" max="2147483647" step="1" value={fields.actual_grade} onChange={e => setFields({ ...fields, actual_grade: e.target.value })}/></label>
+        <label>真实品级<input aria-label="真实品级" required type="number" min="1" max="2147483647" step="1" value={fields.actual_grade} onChange={e => { gradeManual.current = true; setFields({ ...fields, actual_grade: e.target.value }); }}/>
+          {fields.source_id && <button type="button" className="quiet-button" onClick={() => { const source = sources.find(row => row.id === fields.source_id); if (source?.default_grade != null) { gradeManual.current = false; setFields({ ...fields, actual_grade: String(source.default_grade) }); } }}>使用来源默认</button>}
+        </label>
         {!fields.source_id && sourceChoice === 'manual' && <>
           <label>来源名称<input aria-label="装备来源名称" placeholder="装备从哪里获得" required maxLength={100} value={fields.source_name} onChange={e => setFields({ ...fields, source_name: e.target.value })}/></label>
           <label>表格简称<input aria-label="装备来源简称" required maxLength={12} value={fields.short_label} onChange={e => setFields({ ...fields, short_label: e.target.value })}/></label>

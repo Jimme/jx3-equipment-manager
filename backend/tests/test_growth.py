@@ -213,7 +213,7 @@ def test_account_isolation_archiving_and_stale_cycle(client, setup):
     body=body_for(report(client,setup))
     client.post('/api/cycles',json={'name':'切换周期'})
     assert client.put(path(setup),json=body).status_code==409
-    client.put(f"/api/accounts/{setup['account']['id']}/characters/{setup['character']['id']}",json={'name':'归档角色','archived':True})
+    client.put(f"/api/accounts/{setup['account']['id']}/characters/{setup['character']['id']}",json={'name':'归档角色','archived':True,'expected_version':0})
     assert client.get(path(setup)).status_code==200
     assert client.put(path(setup),json=body_for(report(client,setup))).status_code==409
 

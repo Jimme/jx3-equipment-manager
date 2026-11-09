@@ -18,9 +18,16 @@ from backend.drop_merge import merge_drop_rows
 
 def expected_tables(document):
     revision = document['schema_revision']
-    if revision not in ('0006', '0007', '0008', '0009'):
+    if revision not in ('0006', '0007', '0008', '0009', '0010'):
         raise ValueError('Unsupported source revision: ' + revision)
     tables = copy.deepcopy(document['tables'])
+    if revision != '0010':
+        for row in tables['game_accounts']:
+            row['version'] = 0
+        for row in tables['characters']:
+            row.update(version=0, raid_version=0, history_complete=False)
+        tables['creation_receipts'] = []
+        tables['raid_cd_settings'] = [{'id': 1, 'enabled': False, 'version': 0, 'cursor_10': None, 'cursor_25': None, 'changed_at': None}]
     if revision in ('0006', '0007'):
         for row in tables['equipment_cycles']:
             assert 'has_constitution_sockets' not in row
@@ -40,7 +47,7 @@ def expected_tables(document):
 
 
 def verify_tables(before, after):
-    assert after['schema_revision'] == '0009'
+    assert after['schema_revision'] == '0010'
     expected, changes = expected_tables(before)
     actual = copy.deepcopy(after['tables'])
     old_ids = {row['id'] for row in expected['audit_events']}
@@ -75,7 +82,7 @@ def main():
     parser.add_argument('phase', choices=['before', 'after'])
     parser.add_argument('--url', required=True, help='Application URL without /api')
     parser.add_argument('--state', type=Path, default=Path('.tools/update-verification.json'))
-    parser.add_argument('--version', default='0.1.10')
+    parser.add_argument('--version', default='0.1.11')
     args = parser.parse_args()
     if '.tools' not in args.state.resolve().parts:
         parser.error('Private update state must be stored under .tools')

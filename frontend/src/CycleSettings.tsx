@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, optionalInteger } from './api';
+import { requestId } from './requestId';
 import { CycleDataEditor } from './CycleDataEditor';
 import { CyclePreviewPanel } from './CyclePreviewPanel';
 import type { CycleData, CyclePreview, Data, Run, Source } from './types';
@@ -18,6 +19,8 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
   const [name,setName] = useState('');
   const [source,setSource] = useState<Source | null>(null);
   const [sourceOpen,setSourceOpen] = useState(false);
+  const [createId,setCreateId] = useState(requestId);
+  useEffect(()=>setCreateId(requestId()),[form,sourceOpen,source?.id]);
   const empty = {source_type:'其他',name:'',short_label:'',default_grade:''};
   const [fields,setFields] = useState(empty);
   const [copyPreview,setCopyPreview] = useState<CyclePreview | null>(null);
@@ -119,7 +122,7 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
     {loading && <p role="status" className="hint">正在读取周期配置…</p>}
     {form && !copyPreview && <form className="inline-form" onSubmit={e=>{e.preventDefault();void run(async()=>{
       if(form==='copy') setCopyPreview(await api<CyclePreview>(`/cycles/${cycleId}/copy-preview`,'POST',{name,expected_version:cycle!.version}));
-      else {const result=await api<{id:string}>(form==='rename'?`/cycles/${cycleId}`:'/cycles',form==='rename'?'PUT':'POST',form==='rename'?{name,expected_version:cycle!.version}:{name});setName('');setForm(null);setSourceOpen(false);applied(result.id);}
+      else {const result=await api<{id:string}>(form==='rename'?`/cycles/${cycleId}`:'/cycles',form==='rename'?'PUT':'POST',form==='rename'?{name,expected_version:cycle!.version}:{name,request_id:createId});setName('');setForm(null);setSourceOpen(false);applied(result.id);}
     },form==='copy'?'已生成周期复制预览':'周期已保存',undefined,form!=='copy');}}><label>{form==='rename'?'修改名称':form==='copy'?'新周期名称（复制配置）':'新周期名称'}<input aria-label="周期名称" placeholder="填写实际的 25 人副本名" required maxLength={100} value={name} disabled={disabled} onChange={e=>setName(e.target.value)}/></label>{cycle && <button type="button" disabled={disabled} onClick={()=>{setForm(null);setCopyPreview(null);}}>取消</button>}<button className="primary" disabled={disabled}>{form==='rename'?'保存名称':form==='copy'?'预览复制':'创建周期'}</button></form>}
     {copyPreview && <CyclePreviewPanel cycleId={cycleId} preview={copyPreview} run={run} pending={pending} cancel={()=>setCopyPreview(null)} applied={applied}/>}
     {config && !copyPreview && <div hidden={!!form}>
@@ -135,7 +138,7 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
         {!sourceOpen && !cycle?.archived && <button disabled={disabled} onClick={()=>{setSource(null);setFields(empty);setSourceOpen(true);}}>＋ 添加来源</button>}
         {sourceConflict && <p role="alert" className="message error">该来源已在别处修改或删除。当前输入已保留，请核对后重新编辑。</p>}
         {sourceOpen && !cycle?.archived && <form className="subform" onSubmit={e=>{e.preventDefault();if(sourceConflict)return;void run(async()=>{
-          await api(`/cycles/${cycleId}/sources${source?`/${source.id}`:''}`,source?'PUT':'POST',{...fields,default_grade:optionalInteger(fields.default_grade),expected_version:cycle!.version});setSourceOpen(false);
+          await api(`/cycles/${cycleId}/sources${source?`/${source.id}`:''}`,source?'PUT':'POST',{...fields,default_grade:optionalInteger(fields.default_grade),expected_version:cycle!.version,...(!source?{request_id:createId}:{})});setSourceOpen(false);
         },'来源已保存');}}><fieldset disabled={disabled}><h3>{source?'编辑来源':'添加来源'}</h3><div className="form-grid"><label>来源名称<input aria-label="来源名称" required maxLength={100} placeholder="例如：25 人普通" value={fields.name} onChange={e=>setFields({...fields,name:e.target.value})}/></label><label>表格简称<input aria-label="来源简称" required maxLength={12} placeholder="例如：pt" value={fields.short_label} onChange={e=>setFields({...fields,short_label:e.target.value})}/></label><label>默认品级（可空）<input aria-label="默认真实品级" type="number" min="1" max="2147483647" value={fields.default_grade} onChange={e=>setFields({...fields,default_grade:e.target.value})}/></label></div><div className="dialog-actions"><button type="button" onClick={()=>setSourceOpen(false)}>取消</button><button className="primary" disabled={!!sourceConflict}>保存来源</button></div></fieldset></form>}
       </div>
       <div hidden={section!=='data'}><CycleDataEditor key={`${cycleId}:${editorEpoch}`} data={config} run={run} pending={disabled} applied={applied} onDirty={setDirty}/></div>

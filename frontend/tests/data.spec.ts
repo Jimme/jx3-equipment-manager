@@ -67,7 +67,9 @@ test('数据维护：下载、无效文件、预览取消、冲突保护、JSON 
   await dialog.getByRole('button',{name:'确认替换并备份',exact:true}).click();
   await expect(dialog).toHaveCount(0);
   expect((await (await request.get('/api/workspace')).json()).accounts.some((a:any)=>a.id===extra.id)).toBe(false);
-  await request.put(`/api/accounts/${account.id}`,{data:{name:'错误修改的账号名'}});
+  const latestAccount = (await (await request.get('/api/workspace')).json()).accounts.find((item: {id: string}) => item.id === account.id);
+  const renamed = await request.patch(`/api/accounts/${account.id}`,{data:{name:'错误修改的账号名',expected_version:latestAccount.version}});
+  expect(renamed.ok()).toBe(true);
   await page.getByRole('button',{name:'数据与备份',exact:true}).click();
   await dialog.getByLabel('导入或恢复文件').setInputFiles({name:dbFile.suggestedFilename(),mimeType:'application/vnd.sqlite3',buffer:dbRaw});
   await expect(dialog.getByRole('heading',{name:'数据库恢复预览',exact:true})).toBeVisible();
