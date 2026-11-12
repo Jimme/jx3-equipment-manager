@@ -205,6 +205,32 @@ class BatchEquipmentApply(MutationInput):
     preview_id: str
 
 
+class WarehouseBatchRow(Input):
+    item_id: str | None = None
+    expected_version: Nonnegative | None = None
+    quantity: Grade
+    equipment: TemplateInput
+    choices: EquipmentChoices = Field(default_factory=EquipmentChoices)
+
+    @model_validator(mode='after')
+    def valid_target(self):
+        if (self.item_id is None) != (self.expected_version is None):
+            raise ValueError('更正库存需要记录及版本')
+        return self
+
+
+class WarehouseBatchInput(Input):
+    rows: Annotated[list[WarehouseBatchRow], Field(min_length=1)]
+    all_stock: dict[str, Nonnegative] | None = None
+
+    @model_validator(mode='after')
+    def unique_targets(self):
+        targets = [row.item_id for row in self.rows if row.item_id is not None]
+        if len(set(targets)) != len(targets):
+            raise ValueError('同一库存配置不能重复提交')
+        return self
+
+
 class WarehouseEquip(MutationInput):
     character_id: str
     slot: str

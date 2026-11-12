@@ -10,7 +10,7 @@ import type { Data, HistoryItem, InventoryItem, Run } from './types';
 
 export type StockTarget = 'warehouse' | 'drops';
 export type InventorySelection = { tab: StockTarget | 'gaps' | 'history'; equipmentType?: string };
-export type InventoryDialog = ({ kind: 'add'; target: StockTarget; equipmentType?: string } | { kind: 'edit'; target: StockTarget; item: InventoryItem } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
+export type InventoryDialog = ({ kind: 'add'; target: StockTarget; equipmentType?: string; grade?: number } | { kind: 'edit'; target: StockTarget; item: InventoryItem } | { kind: 'equip'; item: InventoryItem; characterId?: string; slot?: string } | { kind: 'transfer'; item: InventoryItem }) & { requestId: string };
 
 function equipmentName(data: Data, type: string) {
   return type === 'ring' ? '戒指' : data.workspace.slots.find(s => s.key === type)?.name ?? type;
@@ -153,7 +153,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
       {tab === 'history' && <>{historyError && <p role="alert" className="message error">{historyError}</p>}{historyLoading ? <p className="small-empty">正在读取操作记录…</p> : history.length === 0 ? <p className="small-empty">还没有装备、仓库或掉落操作记录。</p> : <ol className="history-list">{history.map(item => <li key={item.id}><div><strong>{item.title}</strong><time>{new Date(item.created_at).toLocaleString('zh-CN')}</time></div><p>{item.summary}</p></li>)}</ol>}</>}
     </div>
     {dialog && <Modal title={modalTitle} close={close} busy={pending} compact>{error && <p role="alert" className="message error">{error}</p>}
-      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
+      {dialog.kind === 'add' && <AddInventory key={dialog.requestId} data={data} target={dialog.target} equipmentType={dialog.equipmentType} grade={dialog.grade} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty}/>}
       {dialog.kind === 'edit' && <EditInventory key={dialog.requestId} data={data} target={dialog.target} item={dialog.item} requestId={dialog.requestId} run={run} pending={pending} close={close} savedClose={dismiss} onDirty={setDirty} actions={<>
         <button type="button" className="danger" disabled={pending} onClick={() => deleteItem(dialog.item, dialog.target)}>{dialog.target === 'warehouse' ? '删除库存' : '删除掉落'}</button>
         {dialog.target === 'drops' && <button type="button" disabled={pending} onClick={() => { if (!dirty || window.confirm('入库将放弃本次更正草稿，确认使用已保存配置入库？')) transferAll(dialog.item); }}>一键入库 · {dialog.item.quantity} 件</button>}
@@ -171,11 +171,11 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
 
 type ActionProps = { data: Data; run: Run; pending: boolean; close: () => void; savedClose: () => void; onDirty: (dirty: boolean) => void; requestId: string };
 
-function AddInventory({ data, target, equipmentType, requestId, run, pending, close, savedClose, onDirty }: ActionProps & { target: StockTarget; equipmentType?: string }) {
+function AddInventory({ data, target, equipmentType, grade, requestId, run, pending, close, savedClose, onDirty }: ActionProps & { target: StockTarget; equipmentType?: string; grade?: number }) {
   const [type, setType] = useState(equipmentType ?? 'hat');
   const [quantity, setQuantity] = useState('1');
   const [specificDirty, setSpecificDirty] = useState(false);
-  return <EquipmentForm data={data} type={type} run={run} pending={pending} close={close} savedClose={savedClose} onDirty={onDirty} onSpecificDirty={setSpecificDirty} extraDirty={quantity !== '1' || type !== (equipmentType ?? 'hat')} submitLabel={target === 'warehouse' ? '保存库存' : '保存掉落'} success={target === 'warehouse' ? '已添加共享库存' : '已记录掉落'}
+  return <EquipmentForm data={data} type={type} initialGrade={grade} run={run} pending={pending} close={close} savedClose={savedClose} onDirty={onDirty} onSpecificDirty={setSpecificDirty} extraDirty={quantity !== '1' || type !== (equipmentType ?? 'hat')} submitLabel={target === 'warehouse' ? '保存库存' : '保存掉落'} success={target === 'warehouse' ? '已添加共享库存' : '已记录掉落'}
     leadingFields={<div className="form-grid">{!equipmentType && <label>装备部位<select aria-label="库存装备部位" value={type} onChange={e => {
       if (specificDirty && !window.confirm('更换部位会清除本次部位专属属性和附加配置，来源与品级会保留。确定继续？')) return;
       setType(e.target.value);

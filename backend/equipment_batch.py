@@ -29,7 +29,7 @@ def prepare(session, account_id, character_id, payload):
         raise HTTPException(409, '角色已移除或不属于当前账号')
     state = {'account': {'id': account.id, 'archived': account.archived},
              'character': {'id': character.id, 'account_id': character.account_id, 'archived': character.archived},
-             'worn': [], 'stock': {}, 'cycles': {}}
+             'worn': [], 'stock': {}, 'cycles': {}, 'sources': {}}
     rows, changes, needed = [], [], Counter()
     for entry in payload.rows:
         worn = writable_slot(session, account_id, character_id, entry.slot)
@@ -57,6 +57,9 @@ def prepare(session, account_id, character_id, payload):
                 source = require(session, Source, equipment.source_id)
                 if source.cycle_id != equipment.cycle_origin_id:
                     raise HTTPException(422, '来源不属于该行装备原周期')
+                state['sources'].setdefault(source.id, {key: getattr(source, key) for key in ('source_type', 'name', 'short_label')})
+                if equipment.actual_grade is None:
+                    state['sources'][source.id]['default_grade'] = source.default_grade
                 values.update(source_type=source.source_type, source_name=source.name, short_label=source.short_label)
                 if values['actual_grade'] is None:
                     values['actual_grade'] = source.default_grade

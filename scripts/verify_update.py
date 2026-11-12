@@ -35,6 +35,8 @@ def expected_tables(document):
     if revision == '0006':
         for row in tables['characters']:
             row.update(raid_10=False, raid_25pt=False, raid_25yx=False)
+    if revision in ('0009', '0010'):
+        return tables, []
     merged, changes = merge_drop_rows(tables['raid_drop_notes'])
     tables['raid_drop_notes'] = merged
     for _, after in changes:
@@ -82,7 +84,7 @@ def main():
     parser.add_argument('phase', choices=['before', 'after'])
     parser.add_argument('--url', required=True, help='Application URL without /api')
     parser.add_argument('--state', type=Path, default=Path('.tools/update-verification.json'))
-    parser.add_argument('--version', default='0.1.11')
+    parser.add_argument('--version', default='0.1.12')
     args = parser.parse_args()
     if '.tools' not in args.state.resolve().parts:
         parser.error('Private update state must be stored under .tools')

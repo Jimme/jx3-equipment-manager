@@ -15,8 +15,8 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   await dialog.getByLabel('帽子批量操作', { exact: true }).selectOption('new');
   await dialog.getByLabel('帽子批量来源', { exact: true }).selectOption(source.id);
   await expect(dialog.getByLabel('帽子批量品级', { exact: true })).toHaveValue('1110');
-  await dialog.getByRole('group', { name: '帽子体质孔', exact: true }).getByRole('radio', { name: '有', exact: true }).check();
-  await dialog.getByRole('group', { name: '帽子绿字', exact: true }).getByRole('radio', { name: '达标', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: '帽子体质孔', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: '帽子绿字', exact: true }).check();
   await dialog.getByLabel('勾选帽子', { exact: true }).check();
   await dialog.getByLabel('勾选上衣', { exact: true }).check();
   await dialog.getByText('对勾选行统一设置 · 2 行', { exact: true }).click();

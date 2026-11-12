@@ -17,6 +17,7 @@ from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle,
 from .services import BASE_STAT_MATCH, new_id, dump, require, audit, create_template, create_config, choices_for, template_snapshot
 from .inventory import make_inventory_router
 from .equipment_batch import make_batch_router
+from .warehouse_batch import make_warehouse_batch_router
 from .cycle_data import make_cycle_data_router
 from .growth import make_growth_router, growth_reports, load_growth_slots
 from .data_management import make_data_router
@@ -53,7 +54,7 @@ def create_app(data_dir: Path | None = None):
                 await task
             engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.11", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.12", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -79,7 +80,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.11"}
+        return {"status": "ok", "version": "0.1.12"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -383,6 +384,7 @@ def create_app(data_dir: Path | None = None):
         return save_worn(session, account_id, worn, None, expected_version, payload, fingerprint)
 
     app.include_router(make_inventory_router(engine, database))
+    app.include_router(make_warehouse_batch_router(engine))
     app.include_router(make_batch_router(engine))
     app.include_router(make_cycle_data_router(engine, database))
     app.include_router(make_growth_router(engine, database))

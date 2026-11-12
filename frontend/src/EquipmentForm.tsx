@@ -18,7 +18,7 @@ export function BinaryChoice({ title, value, yes, no, hint, onChange }: { title:
 }
 
 type Props = {
-  data: Data; type: string; current?: Template | null; initialChoices?: EquipmentChoices | null;
+  data: Data; type: string; current?: Template | null; initialChoices?: EquipmentChoices | null; initialGrade?: number;
   pending: boolean; run: Run; close: () => void; savedClose?: () => void;
   onSave: (equipment: EquipmentInput, choices: EquipmentChoices) => Promise<unknown>;
   lastEquipment?: Template | null; description?: string; leadingFields?: ReactNode; actions?: ReactNode;
@@ -27,14 +27,14 @@ type Props = {
   submitLabel?: string; success?: string;
 };
 
-export function EquipmentForm({ data, type, current = null, initialChoices = null, pending, run, close, savedClose, onSave, lastEquipment, description, leadingFields, actions, allowCopy = true, onDirty, onSpecificDirty, extraDirty = false, submitLabel = '保存装备', success = '装备已保存' }: Props) {
+export function EquipmentForm({ data, type, current = null, initialChoices = null, initialGrade, pending, run, close, savedClose, onSave, lastEquipment, description, leadingFields, actions, allowCopy = true, onDirty, onSpecificDirty, extraDirty = false, submitLabel = '保存装备', success = '装备已保存' }: Props) {
   const fieldsFor = (t: Template | null) => ({
     cycle_origin_id: t?.cycle_origin_id ?? data.cycleId, source_id: '', source_type: t?.source_type ?? '特殊', source_name: t?.source_name ?? '手动录入', short_label: t?.short_label ?? '自',
-    actual_grade: t?.actual_grade.toString() ?? '', has_constitution_socket: t ? String(t.has_constitution_socket) : '', green_stats_ok: t ? String(t.green_stats_ok) : '',
+    actual_grade: t?.actual_grade.toString() ?? initialGrade?.toString() ?? '', has_constitution_socket: t ? String(t.has_constitution_socket) : '', green_stats_ok: t ? String(t.green_stats_ok) : '',
     base_constitution_override: t?.base_constitution_override?.toString() ?? '', name: t?.name ?? '', note: t?.note ?? '',
   });
   const [fields, setFields] = useState(() => fieldsFor(current));
-  const gradeManual = useRef(!!current);
+  const gradeManual = useRef(!!current || initialGrade !== undefined);
   const [choices, setChoices] = useState(() => draftChoices(initialChoices));
   const initial = useRef(JSON.stringify([fields, choices]));
   const dirty = extraDirty || JSON.stringify([fields, choices]) !== initial.current;

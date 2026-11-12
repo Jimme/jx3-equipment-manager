@@ -7,6 +7,7 @@ import { Modal } from './Modal';
 import { EquipmentForm } from './EquipmentForm';
 import { LatestEquipment } from './LatestEquipment';
 import { BatchEquipmentEditor } from './BatchEquipmentEditor';
+import { WarehouseBatchEditor } from './WarehouseBatchEditor';
 import { InventoryWorkspace, quickTransferDrop, type InventoryDialog, type InventorySelection } from './InventoryWorkspace';
 import { WarehouseEquip } from './WarehouseEquip';
 import { choiceSummary } from './ChoicesFields';
@@ -37,6 +38,20 @@ function indexStock(items: InventoryItem[] = []) {
   return byType;
 }
 
+function warehouseGroups(items: InventoryItem[] = []) {
+  const groups = new Map<number | null, InventoryItem[]>();
+  for (const item of items) {
+    const grade = item.equipment.actual_grade ?? null;
+    const group = groups.get(grade) ?? [];
+    group.push(item);
+    groups.set(grade, group);
+  }
+  return [...groups].sort(([a], [b]) => (b ?? -1) - (a ?? -1)).map(([grade, entries]) => {
+    const byType = indexStock(entries);
+    return { grade, byType, width: Math.max(...[...byType.values()].map(group => group.length)) };
+  });
+}
+
 function rememberedAccount(): string {
   try { return window.localStorage.getItem('jx3-selected-account') ?? ''; } catch { return ''; }
 }
@@ -54,13 +69,14 @@ function App() {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [equipmentDirty, setEquipmentDirty] = useState(false);
   const [batchCharacter, setBatchCharacter] = useState<Character | null>(null);
+  const [batchWarehouse, setBatchWarehouse] = useState<Data | null>(null);
   const [batchDirty, setBatchDirty] = useState(false);
   const [targetDraft, setTargetDraft] = useState<{ accountId: string; value: string } | null>(null);
   const [lastEquipment, setLastEquipment] = useState<Template | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
   const [inventorySelection, setInventorySelection] = useState<InventorySelection | null>(null);
   const [inventoryDialog, setInventoryDialog] = useState<InventoryDialog | null>(null);
-  const warehouse = useMemo(() => indexStock(data?.daily?.warehouse), [data?.daily?.warehouse]);
+  const warehouse = useMemo(() => warehouseGroups(data?.daily?.warehouse), [data?.daily?.warehouse]);
   const drops = useMemo(() => indexStock(data?.daily?.drops), [data?.daily?.drops]);
   const grades = useMemo(() => [...new Set([
     ...(data?.sources.map(s => s.default_grade) ?? []),
@@ -148,7 +164,7 @@ function App() {
   const closePanel = () => { if (pendingRef.current) return; if (peoplePanel && peopleDirty && !window.confirm('账号或角色名称还没保存，关闭会丢弃。确定关闭？')) return; if (panel === 'sources' && cycleDirty && !window.confirm('有未保存的输入，关闭会丢弃。确定关闭？')) return; setPanel(null); setError(''); setCycleDirty(false); setPeopleDirty(false); };
   const closeGrowth = () => { if (pendingRef.current) return; if (growthDirty && !window.confirm('养成输入还没保存，关闭会丢弃。确定关闭？')) return; setGrowthCharacter(null); setGrowthDirty(false); setError(''); };
   const dismissEquipment = () => { setEditing(null); setEquipmentDirty(false); setError(''); };
-  const dismissBatch = () => { setBatchCharacter(null); setBatchDirty(false); setError(''); };
+  const dismissBatch = () => { setBatchCharacter(null); setBatchWarehouse(null); setBatchDirty(false); setError(''); };
   const closeBatch = () => {
     if (pendingRef.current) return;
     if (batchDirty && !window.confirm('批量录入尚未保存，关闭会丢弃全部草稿。确定关闭？')) return;
@@ -183,9 +199,8 @@ function App() {
   const { workspace, matrix, accountId, cycleId } = data;
   const account = matrix?.account;
   const target = targetDraft?.accountId === accountId ? targetDraft.value : account?.target_grade?.toString() ?? '';
-  const stock = { warehouse, drops };
   const stockWidths = {
-    warehouse: Math.max(1, ...[...warehouse.values()].map(items => items.length + 1)),
+    warehouse: warehouse.reduce((sum, group) => sum + group.width, 1),
     drops: Math.max(1, ...[...drops.values()].map(items => items.length + 1)),
   };
   const comparisonHelp = account?.target_grade == null ? '未设目标，暂不比较' : account.comparison_mode === 'grade' ? '仅比较真实品级' : '高于目标即达标；同品级需绿字达标，适用时还需体质孔';
@@ -226,7 +241,7 @@ function App() {
       {matrix!.characters.length === 0 && <div className="matrix-empty-roles"><span>这个账号还没有角色</span><button disabled={pending} onClick={() => setPanel('add-character')}>添加角色</button></div>}
       {!cycleId && <p className="matrix-empty-roles hint">先在「周期与来源」创建周期，即可添加库存或记录掉落。</p>}
       <div className="matrix-scroll" tabIndex={0} aria-label="可横向滚动的装备矩阵"><table className={`matrix mode-${account.comparison_mode} ${gapsOnly ? 'focus-gaps' : ''}`}>
-        <thead><tr><th scope="col">装备部位</th>{matrix!.characters.map(c => <th scope="col" key={c.id}>
+        <thead><tr><th scope="col" rowSpan={2}>装备部位</th>{matrix!.characters.map(c => <th scope="col" rowSpan={2} key={c.id}>
           <div className="character-heading">
             <button className="growth-entry" title="养成与体质" disabled={pending} onClick={() => { setError(''); setGrowthCharacter(c); }} aria-label={`${c.name} 养成与体质`}>{c.name}</button>
             <button className="batch-entry" disabled={pending || !cycleId} onClick={() => { setError(''); setBatchCharacter(c); }} aria-label={`${c.name} 批量录入装备`}>批量录入</button>
@@ -237,10 +252,14 @@ function App() {
             </fieldset>
           </div>
           <small>{matrix!.growth[c.id]?.equipment_total == null ? '体质待完善' : `装备体质 ${matrix!.growth[c.id].equipment_total}`}</small>
-        </th>)}{stockColumns.map(([key, label, addLabel]) => <th className="stock-column" scope="colgroup" colSpan={stockWidths[key]} key={key}>
+        </th>)}{stockColumns.map(([key, label, addLabel]) => <th className="stock-column" scope="colgroup" rowSpan={key === 'drops' ? 2 : undefined} colSpan={stockWidths[key]} key={key}>
           <button className="stock-heading-button" disabled={pending} aria-controls="daily-panel" onClick={() => openInventory({ tab: key })}>{label}</button>
           <button className="stock-add" disabled={pending || !cycleId} onClick={() => { setError(''); setInventoryDialog({ kind: 'add', target: key, requestId: newRequestId() }); }}>{addLabel}</button>
-        </th>)}</tr></thead>
+          {key === 'warehouse' && <button className="stock-add" disabled={pending || !cycleId} onClick={() => { setError(''); setBatchWarehouse(data); }}>批量更改仓库</button>}
+        </th>)}</tr><tr className="stock-grade-headings">
+          {warehouse.map(group => <th className="stock-grade" scope="colgroup" colSpan={group.width} key={group.grade ?? 'unknown'}>{group.grade ?? '品级未知'}</th>)}
+          <th className="stock-grade stock-new-column" scope="col">新增</th>
+        </tr></thead>
         <tbody>{workspace.slots.map(slot => <tr key={slot.key}><th scope="row">{slot.name}</th>{matrix!.characters.map(c => {
           const cell = matrix!.cells[c.id][slot.key];
           const equipment = cell.equipment;
@@ -255,25 +274,29 @@ function App() {
         })}{stockColumns.flatMap(([key, label, addLabel]) => {
           if (slot.key === 'ring2') return [];
           const equipmentType = slot.key === 'ring1' ? 'ring' : slot.key;
-          const items = stock[key].get(equipmentType) ?? [];
-          return Array.from({ length: stockWidths[key] }, (_, index) => {
-            const item = items[index];
-            return <td className="stock-cell" key={`${key}-${index}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
-            <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${index + 1}`} onClick={() => {
+          const dropItems = drops.get(equipmentType) ?? [];
+          const columns = key === 'warehouse'
+            ? [...warehouse.flatMap(group => Array.from({ length: group.width }, (_, index) => ({ item: group.byType.get(equipmentType)?.[index], grade: group.grade, start: index === 0, add: true, id: `${group.grade}-${index}` }))), { item: undefined, grade: null, start: false, add: true, id: 'new' }]
+            : Array.from({ length: stockWidths.drops }, (_, index) => ({ item: dropItems[index], grade: null, start: false, add: index === dropItems.length, id: String(index) }));
+          let number = 0;
+          return columns.map(({ item, grade, start, add, id }) => {
+            if (item) number++;
+            return <td className={`stock-cell${start ? ' stock-grade-start' : ''}${id === 'new' ? ' stock-new-column' : ''}`} data-stock-grade={grade ?? undefined} key={`${key}-${id}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
+            <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${number}`} onClick={() => {
               setError(''); setInventoryDialog({ kind: 'edit', target: key, item, requestId: newRequestId() });
             }}>
-              <span className="stock-main">{item.label} · {item.equipment.actual_grade} · ×{item.quantity}</span>
+              <span className="stock-main">{item.label} · {item.equipment.actual_grade ?? '品级未知'} · ×{item.quantity}</span>
               <small className="stock-details">{choiceSummary(item.choices, equipmentType === 'weapon')}</small>
               {slot.key === 'ring1' && <small>两格通用</small>}
-            </button>{key === 'drops' && <button className="stock-quick" disabled={pending} aria-label={`一键入库${slot.name}掉落配置${index + 1}`} onClick={() => quickTransferDrop(item, run)}>入库 ×{item.quantity}</button>}</> :
-            index === items.length ? <button className="stock-entry" aria-label={`${slot.name}：${addLabel}`} disabled={pending || !cycleId} onClick={() => { setError(''); setInventoryDialog({ kind: 'add', target: key, equipmentType, requestId: newRequestId() }); }}>＋{slot.key === 'ring1' && <small>两格通用</small>}</button> : null}
+            </button>{key === 'drops' && <button className="stock-quick" disabled={pending} aria-label={`一键入库${slot.name}掉落配置${number}`} onClick={() => quickTransferDrop(item, run)}>入库 ×{item.quantity}</button>}</> :
+            add ? <button className={`stock-entry${grade !== null ? ' stock-empty-grade' : ''}`} aria-label={`${slot.name}：${addLabel}${grade !== null ? ` ${grade} 品` : ''}`} disabled={pending || !cycleId} onClick={() => { setError(''); setInventoryDialog({ kind: 'add', target: key, equipmentType, grade: grade ?? undefined, requestId: newRequestId() }); }}><span aria-hidden="true">＋</span></button> : null}
           </td>;
           });
         })}</tr>)}</tbody>
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.11</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.12</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
@@ -282,6 +305,10 @@ function App() {
     {batchCharacter && <Modal title={`${batchCharacter.name} · 批量录入装备`} close={closeBatch} wide busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <BatchEquipmentEditor data={data} character={batchCharacter} run={run} pending={pending} close={closeBatch} savedClose={dismissBatch} onDirty={setBatchDirty}/>
+    </Modal>}
+    {batchWarehouse && <Modal title={`${batchWarehouse.matrix?.account.name} · 批量更改仓库`} close={closeBatch} wide busy={pending}>
+      {error && <p role="alert" className="message error">{error}</p>}
+      <WarehouseBatchEditor data={batchWarehouse} run={run} pending={pending} close={closeBatch} savedClose={dismissBatch} onDirty={setBatchDirty}/>
     </Modal>}
     {growthCharacter && <Modal title={`${growthCharacter.name} · 养成与体质`} close={closeGrowth} wide busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}

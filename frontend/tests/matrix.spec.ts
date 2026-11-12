@@ -30,8 +30,18 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
     await expect(dialog.locator('.entity-row').filter({ hasText: `测试角色${i}` })).toBeVisible();
     if ([1, 3, 6].includes(i)) {
       await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-      await expect(page.locator('.matrix thead th')).toHaveCount(i + 3);
+      await expect(page.locator('.matrix thead tr:first-child > th')).toHaveCount(i + 3);
       await expect(page.locator('.matrix tbody tr')).toHaveCount(12);
+      const requests: string[] = [];
+      const count = (request: { method(): string; url(): string }) => {
+        if (request.method() === 'GET' && /\/api\/accounts\/[^/]+\/(matrix|daily)(?:\?|$)/.test(request.url())) requests.push(new URL(request.url()).pathname.split('/').at(-1)!);
+      };
+      page.on('request', count);
+      const refresh = page.getByRole('button', { name: '刷新', exact: true });
+      await Promise.all([page.waitForResponse(response => /\/daily(?:\?|$)/.test(response.url())), refresh.click()]);
+      await expect(refresh).toBeEnabled();
+      page.off('request', count);
+      expect(requests.sort()).toEqual(['daily', 'matrix']);
       await page.getByRole('button', { name: '账号与角色', exact: true }).click();
     }
   }

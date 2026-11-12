@@ -191,7 +191,7 @@ h1 { font-size:20px; margin:4px 0 }
   font-size:12px
 }
 .matrix thead th small { display:block; font-size:10px; font-weight:400; color:var(--muted) }
-.matrix th:first-child {
+.matrix tr:not(.stock-grade-headings) > th:first-child {
   position:sticky;
   left:0;
   z-index:1;
@@ -201,7 +201,7 @@ h1 { font-size:20px; margin:4px 0 }
   background:#f8faf6;
   font-size:12px
 }
-.matrix thead th:first-child { z-index:3; background:#edf2ed }
+.matrix thead tr:first-child > th:first-child { z-index:3; background:#edf2ed }
 .matrix tbody th { font-weight:500 }
 .matrix td { padding:0 }
 .equipment-cell {
@@ -242,6 +242,11 @@ h1 { font-size:20px; margin:4px 0 }
 .stock-heading-button { min-height:26px; border:0; padding:2px 4px; background:transparent; font-size:12px; font-weight:600; color:var(--accent); text-decoration:underline }
 .stock-add { font-size:11px; min-height:26px; padding:2px 5px }
 .matrix .stock-cell { background:#f5f8f5; min-width:150px }
+.matrix .stock-grade { position:relative; z-index:1; padding:2px 6px; background:#edf4ef; border-left:2px solid #cbd9d0 }
+.matrix .stock-grade-start { border-left:2px solid #cbd9d0 }
+.matrix .stock-new-column { min-width:50px; width:50px; text-align:center }
+.stock-empty-grade { color:transparent }
+.stock-empty-grade:hover,.stock-empty-grade:focus-visible { color:var(--accent) }
 .stock-entry {
   display:flex;
   align-items:center;
@@ -565,18 +570,19 @@ dialog .menu-tabs { margin-bottom:8px; border-bottom:1px solid var(--line) }
 .compact-dialog { width:520px }
 .batch-entry { padding:2px 5px; min-height:24px; font-size:var(--detail-size); }
 .batch-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; margin:6px 0; }
-.batch-toolbar label { flex-direction:row; align-items:center; gap:5px; }
+.batch-toolbar label { flex-direction:row; align-items:center; gap:5px; white-space:nowrap; }
 .batch-toolbar input[type=number] { width:90px; }
 .batch-scroll { overflow:auto; max-height:65vh; }
-.batch-table { min-width:880px; width:100%; }
+.batch-table { min-width:620px; width:100%; }
 .batch-table th,.batch-table td { vertical-align:top; }
-.batch-table td > small { display:block; }
-.batch-table td:nth-child(2) { width:120px; }
-.batch-table td:nth-child(3) { width:140px; }
-.batch-fields { display:flex; flex-wrap:wrap; align-items:start; gap:6px 10px; }
-.batch-fields input[type=number] { width:90px; }
-.batch-fields .binary-choice { margin:0; }
-.batch-fields label { gap:3px; }
+.batch-table td > small,.batch-table th > small,.batch-scroll td > small { display:block; }
+.batch-table input[type=number] { width:100px; }
+.batch-table select { max-width:100%; }
+.batch-table th:nth-last-child(-n+2),.batch-table .batch-check { text-align:center; white-space:nowrap; }
+.batch-table .batch-check { vertical-align:middle; }
+.batch-table .optional-fields { margin:2px 0 0; }
+.batch-table .optional-fields > summary { min-height:22px; padding:2px 0; }
+.warehouse-batch-table th:first-child { min-width:110px; }
 .batch-conflict { background:#fff1d6; }
 .quantity-conflict { color:#93452e; }
 .equipment-copy { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; font-size: 12px; }

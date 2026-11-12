@@ -351,7 +351,7 @@ def make_inventory_router(engine, read_database):
     @router.get('/history')
     def history(account_id: str, session: Session = DB):
         active_account(session, account_id)
-        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'drop_merge_migration': '归并相同掉落', 'drops_batch_transfer': '所选掉落一键入库', 'raid_check': '副本进度更新'}
+        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'warehouse_batch': '批量更改共享仓库', 'drop_merge_migration': '归并相同掉落', 'drops_batch_transfer': '所选掉落一键入库', 'raid_check': '副本进度更新'}
         rows = list(session.scalars(select(AuditEvent).where(AuditEvent.account_id == account_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id).limit(50)))
         cycle_sockets = dict(session.execute(select(Cycle.id, Cycle.has_constitution_sockets)).all())
         snapshots = {row.id: json.loads(row.snapshots) for row in rows}
