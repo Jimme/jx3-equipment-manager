@@ -283,7 +283,7 @@ def make_cycle_data_router(engine, read_database):
         # 独立连接备份已提交的旧状态；此时还没有修改任何业务数据。
         backup = backup_database(Path(engine.url.database), 'before-cycle-change')
         if token.kind == 'copy':
-            copied = Cycle(id=new_id(), name=rows['name'], archived=False, version=0, copied_from_id=cycle_id, has_constitution_sockets=cycle.has_constitution_sockets)
+            copied = Cycle(id=new_id(), name=rows['name'], archived=False, version=0, copied_from_id=cycle_id, has_constitution_sockets=cycle.has_constitution_sockets, socket_exempt_types=cycle.socket_exempt_types)
             session.add(copied)
             session.flush()
             for source in session.scalars(select(Source).where(Source.cycle_id == cycle_id)):

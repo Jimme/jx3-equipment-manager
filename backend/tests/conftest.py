@@ -39,6 +39,10 @@ def legacy_document(document, revision):
     import copy
     result = copy.deepcopy(document)
     result['schema_revision'] = revision
+    for cycle in result['tables']['equipment_cycles']:
+        cycle.pop('socket_exempt_types')
+    if revision == '0010':
+        return result
     for name in ('creation_receipts', 'raid_cd_settings'):
         result['tables'].pop(name, None)
     for row in result['tables']['game_accounts']:
@@ -50,6 +54,7 @@ def legacy_document(document, revision):
 
 
 def legacy_database_columns(connection):
+    connection.execute('ALTER TABLE equipment_cycles DROP COLUMN socket_exempt_types')
     for table in ('creation_receipts', 'raid_cd_settings'):
         connection.execute('DROP TABLE ' + table)
     connection.execute('ALTER TABLE game_accounts DROP COLUMN version')

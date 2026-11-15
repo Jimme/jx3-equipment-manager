@@ -19,14 +19,14 @@ export function withSource(fields: Fields, source: Source, protectGrade: boolean
     actual_grade: protectGrade ? fields.actual_grade : source.default_grade?.toString() ?? '' };
 }
 
-export function socketApplicable(data: Data, fields: Fields, type: string) {
-  return type !== 'ring' && data.workspace.cycles.find(cycle => cycle.id === fields.cycle_origin_id)?.has_constitution_sockets !== false;
+export function socketApplicable(type: string) {
+  return type !== 'ring';
 }
 
-export function equipmentInput(data: Data, fields: Fields, type: string): EquipmentInput {
+export function equipmentInput(fields: Fields, type: string): EquipmentInput {
   return { ...fields, source_id: fields.source_id || null, equipment_type: type,
     actual_grade: optionalInteger(fields.actual_grade), base_constitution_override: optionalInteger(fields.base_constitution_override),
-    has_constitution_socket: socketApplicable(data, fields, type) && fields.has_constitution_socket === 'true',
+    has_constitution_socket: socketApplicable(type) && fields.has_constitution_socket === 'true',
     green_stats_ok: fields.green_stats_ok === 'true' };
 }
 

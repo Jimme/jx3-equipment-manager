@@ -13,15 +13,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import Boolean
 from backend.data_management import TABLE_MAP, fingerprint
+from backend.domain import EQUIPMENT_TYPES
 from backend.drop_merge import merge_drop_rows
 
 
 def expected_tables(document):
     revision = document['schema_revision']
-    if revision not in ('0006', '0007', '0008', '0009', '0010'):
+    if revision not in ('0006', '0007', '0008', '0009', '0010', '0011'):
         raise ValueError('Unsupported source revision: ' + revision)
     tables = copy.deepcopy(document['tables'])
-    if revision != '0010':
+    if revision in ('0006', '0007', '0008', '0009'):
         for row in tables['game_accounts']:
             row['version'] = 0
         for row in tables['characters']:
@@ -35,7 +36,11 @@ def expected_tables(document):
     if revision == '0006':
         for row in tables['characters']:
             row.update(raid_10=False, raid_25pt=False, raid_25yx=False)
-    if revision in ('0009', '0010'):
+    if revision != '0011':
+        for row in tables['equipment_cycles']:
+            assert 'socket_exempt_types' not in row
+            row['socket_exempt_types'] = '' if row['has_constitution_sockets'] else ','.join(EQUIPMENT_TYPES[:-1])
+    if revision in ('0009', '0010', '0011'):
         return tables, []
     merged, changes = merge_drop_rows(tables['raid_drop_notes'])
     tables['raid_drop_notes'] = merged
@@ -49,7 +54,7 @@ def expected_tables(document):
 
 
 def verify_tables(before, after):
-    assert after['schema_revision'] == '0010'
+    assert after['schema_revision'] == '0011'
     expected, changes = expected_tables(before)
     actual = copy.deepcopy(after['tables'])
     old_ids = {row['id'] for row in expected['audit_events']}
@@ -84,7 +89,7 @@ def main():
     parser.add_argument('phase', choices=['before', 'after'])
     parser.add_argument('--url', required=True, help='Application URL without /api')
     parser.add_argument('--state', type=Path, default=Path('.tools/update-verification.json'))
-    parser.add_argument('--version', default='0.1.12')
+    parser.add_argument('--version', default='0.1.13')
     args = parser.parse_args()
     if '.tools' not in args.state.resolve().parts:
         parser.error('Private update state must be stored under .tools')

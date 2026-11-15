@@ -11,7 +11,7 @@ import { WarehouseBatchEditor } from './WarehouseBatchEditor';
 import { InventoryWorkspace, quickTransferDrop, type InventoryDialog, type InventorySelection } from './InventoryWorkspace';
 import { WarehouseEquip } from './WarehouseEquip';
 import { choiceSummary } from './ChoicesFields';
-import { compareEquipment } from './equipmentUtils';
+import { compareEquipment, socketSummary } from './equipmentUtils';
 import { DataManager } from './DataManager';
 import { GrowthEditor } from './GrowthEditor';
 import { CycleSettings } from './CycleSettings';
@@ -264,7 +264,7 @@ function App() {
           const cell = matrix!.cells[c.id][slot.key];
           const equipment = cell.equipment;
           const status = cell.status === 'met' ? (account.comparison_mode === 'combined' ? '完全达标' : '已达标') : cell.status === 'grade_met' ? '仅品级达标' : cell.status === 'unset' ? '目标待设置' : equipment ? (account.comparison_mode === 'combined' ? '品级不足' : '待提升') : '空缺';
-          const detail = [equipment && `${equipment.source_name} · ${equipment.actual_grade} 品`, status, ...cell.reasons, equipment?.note].filter(Boolean).join('；');
+          const detail = [equipment && `${equipment.source_name} · ${equipment.actual_grade} 品`, equipment && socketSummary(equipment), status, ...cell.reasons, equipment?.note].filter(Boolean).join('；');
           return <td key={c.id} className={`cell-${cell.status}`}><button className="equipment-cell" disabled={pending} aria-label={`${c.name} ${slot.name}`} aria-description={detail} title={detail} onClick={() => setEditing({ character: c, slot: slot.key, slotName: slot.name, cell })}>
             <strong>{equipment ? cell.label : '＋'}</strong>
             {equipment && <span className="cell-grade">{equipment.actual_grade}</span>}
@@ -282,7 +282,7 @@ function App() {
           return columns.map(({ item, grade, start, add, id }) => {
             if (item) number++;
             return <td className={`stock-cell${start ? ' stock-grade-start' : ''}${id === 'new' ? ' stock-new-column' : ''}`} data-stock-grade={grade ?? undefined} key={`${key}-${id}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
-            <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${number}`} onClick={() => {
+            <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${number}`} title={socketSummary(item.equipment)} aria-description={socketSummary(item.equipment)} onClick={() => {
               setError(''); setInventoryDialog({ kind: 'edit', target: key, item, requestId: newRequestId() });
             }}>
               <span className="stock-main">{item.label} · {item.equipment.actual_grade ?? '品级未知'} · ×{item.quantity}</span>
@@ -296,7 +296,7 @@ function App() {
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.12</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.13</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>

@@ -9,6 +9,7 @@ function operationName(path: string, method: string) {
   if (method === 'PATCH') return '管理信息修改';
   if (path.includes('equipment-batch')) return '角色批量保存';
   if (path.includes('warehouse-batch')) return '仓库批量保存';
+  if (path.endsWith('/warehouse/clear')) return '清空共享仓库';
   if (path.includes('/quantity')) return '数量修改';
   if (path.includes('/transfer') || path.includes('batch-transfer')) return '掉落入库';
   if (path.endsWith('/characters')) return '角色创建';

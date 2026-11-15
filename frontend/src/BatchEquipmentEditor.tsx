@@ -47,7 +47,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   const warehouse = useMemo(() => new Map(working.daily!.warehouse.map(item => [item.id, item])), [working.daily]);
   const chosen = rows.filter(row => row.selected);
   const typeFor = (slot: string) => slot.startsWith('ring') ? 'ring' : slot;
-  const hasSocket = (row: Row) => socketApplicable(working, row.fields, typeFor(row.slot));
+  const hasSocket = (row: Row) => socketApplicable(typeFor(row.slot));
   function update(slot: string, values: Partial<Row>) {
     setRows(old => old.map(row => row.slot === slot ? { ...row, ...values } : row));
   }
@@ -146,7 +146,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
       if (row.action === 'clear') return base;
       const choices = serializeChoices(row.choices);
       if (row.action === 'warehouse') return { ...base, warehouse_id: row.warehouseId, expected_stock_version: row.stockVersion, choices };
-      const equipment = equipmentInput(working, row.fields, typeFor(row.slot));
+      const equipment = equipmentInput(row.fields, typeFor(row.slot));
       return { ...base, equipment, choices };
     });
   }

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .database import backup_database
-from .domain import SLOTS, equipment_type, label, socket_applicable
+from .domain import SLOTS, equipment_type, label, socket_applicable, socket_required
 from .inventory import check_version, finish_operation, owned, start_operation
 from .models import Character, Cycle, DataChangePreview, EquipmentConfig, Source, Template, WarehouseStack
 from .schemas import BatchEquipmentApply, BatchEquipmentInput, EquipmentChoices
@@ -73,8 +73,8 @@ def prepare(session, account_id, character_id, payload):
                 raise HTTPException(422, f'{dict(SLOTS)[entry.slot]}装备部位不匹配')
             cycle = require(session, Cycle, values['cycle_origin_id'])
             state['cycles'][cycle.id] = dump(cycle)
-            applicable = socket_applicable(values['equipment_type'], cycle.has_constitution_sockets)
-            if not applicable:
+            applicable = socket_required(values['equipment_type'], cycle.socket_exempt_types)
+            if not socket_applicable(values['equipment_type']):
                 values['has_constitution_socket'] = False
             if values['equipment_type'] != 'weapon' and choices.rainbow.state != 'unknown':
                 raise HTTPException(422, '只有武器可以记录五彩石')
@@ -84,14 +84,14 @@ def prepare(session, account_id, character_id, payload):
         if previous:
             cycle = require(session, Cycle, previous.cycle_origin_id)
             state['cycles'][cycle.id] = dump(cycle)
-            applicable = socket_applicable(previous.equipment_type, cycle.has_constitution_sockets)
+            applicable = socket_required(previous.equipment_type, cycle.socket_exempt_types)
             before_label = f"{label(previous.short_label, previous.has_constitution_socket, previous.green_stats_ok, applicable)} · {previous.actual_grade} 品"
         else:
             before_label = '未装备'
         unchanged = entry.action == 'clear' and previous is None
         if entry.action in ('edit', 'new') and previous:
             previous_values = dump(previous)
-            previous_values['has_constitution_socket'] = applicable and previous.has_constitution_socket
+            previous_values['has_constitution_socket'] = socket_applicable(previous.equipment_type) and previous.has_constitution_socket
             unchanged = all(previous_values[key] == value for key, value in values.items() if key not in ('id', 'source_id')) and choices.model_dump() == choices_for(config)
         if not unchanged:
             rows.append((entry, worn, stock, choices))

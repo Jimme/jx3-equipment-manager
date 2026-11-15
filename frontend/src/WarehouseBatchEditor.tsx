@@ -111,7 +111,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
   function describe(config: Configuration | null) {
     if (!config) return '新库存';
     const item = config.equipment;
-    const hole = socketApplicable(working, { ...fieldsFor(null, item.cycle_origin_id) }, item.equipment_type) ? (item.has_constitution_socket ? '有孔' : '无孔') : '孔不适用';
+    const hole = socketApplicable(item.equipment_type) ? (item.has_constitution_socket ? '有孔' : '无孔') : '孔不适用';
     return <><strong>{names.get(item.equipment_type)} · {item.actual_grade} 品 · {item.source_name}</strong>
       <small>{working.workspace.cycles.find(cycle => cycle.id === item.cycle_origin_id)?.name} · {hole} · {item.green_stats_ok ? '绿字达标' : '绿字未达标'}</small>
       <small>{choiceSummary(config.choices, item.equipment_type === 'weapon')}</small>
@@ -135,7 +135,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
     void run(async () => {
       const next = await api<Preview>(endpoint + '/preview', 'POST', { all_stock: whole ? allStock : null, rows: changes.map(row => ({
         item_id: row.original?.id ?? null, expected_version: row.original?.version ?? null, quantity: optionalInteger(row.quantity),
-        equipment: equipmentInput(working, row.fields, row.type), choices: serializeChoices(row.choices),
+        equipment: equipmentInput(row.fields, row.type), choices: serializeChoices(row.choices),
       })) });
       setOperation(requestId()); setPreview(next);
     }, '', undefined, false);
@@ -199,7 +199,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
             <td><input aria-label={`${name}仓库品级`} required={required} type="number" min="1" max="2147483647" value={row.fields.actual_grade} onChange={e => field(row, { actual_grade: e.target.value })}/>
               {row.gradeOverride && grade && <button type="button" className="quiet-button" title="本行已单独设置" onClick={() => update(row, { gradeOverride: false, gradeManual: true, fields: { ...row.fields, actual_grade: grade } })}>恢复统一</button>}</td>
             <td><input aria-label={`${name}仓库件数`} required={required} type="number" min="1" max={item?.quantity ?? row.original?.quantity ?? 2147483647} value={row.quantity} onChange={e => update(row, { quantity: e.target.value })}/>{row.original && <small>更正／原 {row.original.quantity} 件</small>}</td>
-            <td className="batch-check">{socketApplicable(working, row.fields, row.type) ? <input aria-label={`${name}仓库体质孔`} type="checkbox" checked={row.fields.has_constitution_socket === 'true'} onChange={e => field(row, { has_constitution_socket: String(e.target.checked) })}/> : <small>不适用</small>}</td>
+            <td className="batch-check">{socketApplicable(row.type) ? <input aria-label={`${name}仓库体质孔`} type="checkbox" checked={row.fields.has_constitution_socket === 'true'} onChange={e => field(row, { has_constitution_socket: String(e.target.checked) })}/> : <small>不适用</small>}</td>
             <td className="batch-check"><input aria-label={`${name}仓库绿字`} type="checkbox" checked={row.fields.green_stats_ok === 'true'} onChange={e => field(row, { green_stats_ok: String(e.target.checked) })}/></td>
           </tr>;
         })}</tbody>

@@ -84,6 +84,14 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   function transferAll(item: InventoryItem) {
     quickTransferDrop(item, run, dialog ? dismiss : undefined);
   }
+  function clearWarehouse() {
+    const warehouse = daily.warehouse;
+    const total = warehouse.reduce((count, item) => count + item.quantity, 0);
+    if (!warehouse.length || !window.confirm(`清空「${data.matrix!.account.name}」共享仓库的全部 ${warehouse.length} 种配置、${total} 件装备？包含所有品级和筛选隐藏的库存。确认后先自动备份，再清空库存。`)) return;
+    void run(() => api(`${path}/warehouse/clear`, 'POST', {
+      request_id: newRequestId(), versions: Object.fromEntries(warehouse.map(item => [item.id, item.version])),
+    }), '已备份并清空共享仓库');
+  }
   const warehouseById = useMemo(() => new Map(daily.warehouse.map(item => [item.id, item])), [daily.warehouse]);
   const visibleGaps = useMemo(() => tab === 'gaps' ? daily.gaps.filter(gap =>
     (!characterFilter || gap.character_id === characterFilter) && (!improvementsOnly || gap.candidate_ids.length > 0)
@@ -96,6 +104,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
       {stockTab && <h3>{stockTitle}{equipmentType && ` · ${equipmentName(data, equipmentType)}`}</h3>}
       {stockTab && <div className="button-row">{equipmentType && <button className="primary" disabled={pending || !data.cycleId} onClick={() => setDialog({ kind: 'add', target: stockTab, equipmentType, requestId: newRequestId() })}>{stockTab === 'warehouse' ? '添加此部位库存' : '记录此部位掉落'}</button>}
             {equipmentType && <button disabled={pending} onClick={() => setSelection({ tab: stockTab })}>查看全部部位</button>}
+            {stockTab === 'warehouse' && <button className="danger" disabled={pending || !daily.warehouse.length} onClick={clearWarehouse}>清空共享仓库</button>}
             {stockTab === 'drops' && !equipmentType && daily.drops.length > 0 && <button className="danger" disabled={pending} onClick={() => { if (window.confirm('清空本账号的本次掉落备忘？共享仓库和角色装备不会改变。')) void run(() => api(`${path}/drops/clear`, 'POST', { request_id: newRequestId(), expected_version: daily.drop_version }), '已清空掉落备忘，仓库未改变'); }}>清空本次掉落</button>}
       </div>}
       <div className="menu-tabs" aria-label="辅助信息">{([['gaps', '缺口明细'], ['history', '操作记录']] as const).map(([key, label]) => <button key={key} aria-pressed={tab === key} aria-controls="daily-panel" disabled={pending} onClick={() => setSelection(tab === key ? null : { tab: key })}>{label}</button>)}</div>

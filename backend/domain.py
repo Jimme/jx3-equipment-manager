@@ -12,8 +12,12 @@ def equipment_type(slot: str) -> str:
     return "ring" if slot in ("ring1", "ring2") else slot
 
 
-def socket_applicable(kind, available=True):
-    return equipment_type(kind) != 'ring' and bool(available)
+def socket_applicable(kind):
+    return equipment_type(kind) != 'ring'
+
+
+def socket_required(kind, exemptions=''):
+    return socket_applicable(kind) and equipment_type(kind) not in (exemptions or '').split(',')
 
 
 def compare(grade, socket, green, target, mode, socket_required=True):

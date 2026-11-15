@@ -74,7 +74,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
     return () => { active = false; };
   }, [fields.cycle_origin_id, data.cycleId]);
   const sources = fields.cycle_origin_id === data.cycleId ? data.sources : historicalSources;
-  const socketApplicable = type !== 'ring' && data.workspace.cycles.find(c => c.id === fields.cycle_origin_id)?.has_constitution_sockets !== false;
+  const socketApplicable = type !== 'ring';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyError, setCopyError] = useState('');
@@ -130,7 +130,7 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
           <label>来源名称<input aria-label="装备来源名称" placeholder="装备从哪里获得" required maxLength={100} value={fields.source_name} onChange={e => setFields({ ...fields, source_name: e.target.value })}/></label>
           <label>表格简称<input aria-label="装备来源简称" required maxLength={12} value={fields.short_label} onChange={e => setFields({ ...fields, short_label: e.target.value })}/></label>
         </>}
-        {socketApplicable ? <BinaryChoice title="是否有体质孔" value={fields.has_constitution_socket} yes="有" no="无" onChange={value => setFields({ ...fields, has_constitution_socket: value })}/> : <p className="fixed-field"><span>体质孔</span><strong>{type === 'ring' ? '戒指无体质孔' : '原周期无体质孔'}</strong></p>}
+        {socketApplicable ? <BinaryChoice title="是否有体质孔" value={fields.has_constitution_socket} yes="有" no="无" onChange={value => setFields({ ...fields, has_constitution_socket: value })}/> : <p className="fixed-field"><span>体质孔</span><strong>戒指无体质孔</strong></p>}
         <BinaryChoice title="绿字是否达标" value={fields.green_stats_ok} yes="达标" no="未达标" hint="内防＋外防＋加速" onChange={value => setFields({ ...fields, green_stats_ok: value })}/>
       </div>
       {sourceError && <p role="alert" className="message error">来源加载失败：{sourceError}</p>}

@@ -14,6 +14,7 @@ class Cycle(Base):
     version: Mapped[int] = mapped_column(Integer, default=0)
     copied_from_id: Mapped[str | None] = mapped_column(ForeignKey('equipment_cycles.id'))
     has_constitution_sockets: Mapped[bool] = mapped_column(default=True)
+    socket_exempt_types: Mapped[str] = mapped_column(String, default='')
 
 
 class Workspace(Base):

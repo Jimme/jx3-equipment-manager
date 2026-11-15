@@ -1,16 +1,19 @@
 """Account-local inventory transactions and read-only upgrade candidates."""
 import hashlib
 import json
+import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .domain import socket_applicable, SLOTS, compare, equipment_type, label
+from .database import backup_database
+from .domain import socket_required, SLOTS, compare, equipment_type, label
 from .models import AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
-from .schemas import DropBatchTransfer, DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseEquip
+from .schemas import DropBatchTransfer, DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseClear, WarehouseEquip
 from .services import (BASE_STAT_MATCH, active_account, choices_for, create_config, create_template, dump,
                        new_id, replace_worn, require, template_snapshot, template_view, writable_slot)
 
@@ -27,7 +30,7 @@ def item_view(row, config, equipment):
 
 
 def inventory_rows(model):
-    return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution, Cycle.has_constitution_sockets).select_from(model)
+    return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution, Cycle.socket_exempt_types).select_from(model)
             .join(EquipmentConfig, EquipmentConfig.id == model.config_id)
             .join(Template, Template.id == EquipmentConfig.template_id)
             .join(Cycle, Cycle.id == Template.cycle_origin_id)
@@ -134,7 +137,7 @@ def make_inventory_router(engine, read_database):
             return result
         characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
         worn = {(row.character_id, row.slot): (row, template, available) for row, template, available in session.execute(
-            select(WornEquipment, Template, Cycle.has_constitution_sockets).select_from(WornEquipment)
+            select(WornEquipment, Template, Cycle.socket_exempt_types).select_from(WornEquipment)
             .join(Character, Character.id == WornEquipment.character_id)
             .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
             .outerjoin(Template, Template.id == EquipmentConfig.template_id)
@@ -154,7 +157,7 @@ def make_inventory_router(engine, read_database):
         for character in characters:
             for slot, slot_name in SLOTS:
                 record, template, available = worn[(character.id, slot)]
-                applicable = socket_applicable(slot, available)
+                applicable = socket_required(slot, available)
                 comparison = compare(template.actual_grade if template else None, template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False, account.target_grade, account.comparison_mode, applicable)
                 if comparison['status'] == 'met':
@@ -178,6 +181,32 @@ def make_inventory_router(engine, read_database):
         item = describe_item(session, stack)
         return finish_operation(session, account_id, 'warehouse_add', stack.id, payload, fingerprint, before, dump(stack),
                                 f"{item['label']} · {template.actual_grade}品：仓库 {before['quantity']} → {stack.quantity} 件", item)
+
+    @router.post('/warehouse/clear')
+    def warehouse_clear(account_id: str, payload: WarehouseClear, session: Session = WRITE):
+        fingerprint, replay = start_operation(session, account_id, 'warehouse_clear', payload)
+        if replay is not None:
+            return replay
+        stacks = list(session.scalars(select(WarehouseStack).where(
+            WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id)))
+        if {stack.id: stack.version for stack in stacks} != payload.versions:
+            raise HTTPException(409, '仓库已变化，请刷新库存后重新确认清空范围')
+        if not stacks:
+            raise HTTPException(422, '共享仓库已空')
+        try:
+            backup = backup_database(Path(engine.url.database), 'before-warehouse-clear')
+        except (OSError, sqlite3.Error, RuntimeError) as error:
+            raise HTTPException(503, '备份失败，仓库未清空；请检查目录权限和空间') from error
+        before = [dump(stack) for stack in stacks]
+        count = sum(stack.quantity for stack in stacks)
+        # Preserve IDs and advance versions so older quantity forms cannot revive cleared stock.
+        for stack in stacks:
+            stack.quantity = 0
+            stack.version += 1
+        result = {'configurations': len(stacks), 'quantity': count, 'backup': backup.name}
+        return finish_operation(session, account_id, 'warehouse_clear', account_id, payload, fingerprint,
+                                {'stacks': before}, {'backup': backup.name},
+                                f'清空共享仓库 {len(stacks)} 种配置，共 {count} 件', result)
 
     @router.post('/warehouse/{stack_id}/quantity')
     def warehouse_quantity(account_id: str, stack_id: str, payload: QuantityChange, session: Session = WRITE):
@@ -351,9 +380,9 @@ def make_inventory_router(engine, read_database):
     @router.get('/history')
     def history(account_id: str, session: Session = DB):
         active_account(session, account_id)
-        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'warehouse_batch': '批量更改共享仓库', 'drop_merge_migration': '归并相同掉落', 'drops_batch_transfer': '所选掉落一键入库', 'raid_check': '副本进度更新'}
+        titles = {'warehouse_add': '添加共享库存', 'warehouse_quantity': '修正仓库数量', 'warehouse_equip': '从仓库穿戴', 'warehouse_edit': '更正共享库存', 'drops_edit': '更正掉落配置', 'drop_add': '记录团本掉落', 'drop_quantity': '修改掉落数量', 'drop_transfer': '掉落转入仓库', 'drop_clear': '清空掉落', 'replace_equipment': '修改角色穿戴', 'character_growth': '修改角色养成', 'equipment_batch': '批量录入角色装备', 'warehouse_batch': '批量更改共享仓库', 'warehouse_clear': '清空共享仓库', 'drop_merge_migration': '归并相同掉落', 'drops_batch_transfer': '所选掉落一键入库', 'raid_check': '副本进度更新'}
         rows = list(session.scalars(select(AuditEvent).where(AuditEvent.account_id == account_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id).limit(50)))
-        cycle_sockets = dict(session.execute(select(Cycle.id, Cycle.has_constitution_sockets)).all())
+        cycle_sockets = dict(session.execute(select(Cycle.id, Cycle.socket_exempt_types)).all())
         snapshots = {row.id: json.loads(row.snapshots) for row in rows}
         config_ids = set()
         for row in rows:
@@ -375,7 +404,7 @@ def make_inventory_router(engine, read_database):
             if pair is None:
                 return '历史装备'
             config, template = pair
-            applicable = socket_applicable(template.equipment_type, cycle_sockets[template.cycle_origin_id])
+            applicable = socket_required(template.equipment_type, cycle_sockets[template.cycle_origin_id])
             parts = []
             for prefix, title in [('enchant', '附魔'), ('rainbow', '五彩石')]:
                 state = getattr(config, f'{prefix}_state')

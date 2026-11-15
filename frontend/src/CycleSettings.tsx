@@ -3,7 +3,7 @@ import { api, optionalInteger } from './api';
 import { requestId } from './requestId';
 import { CycleDataEditor } from './CycleDataEditor';
 import { CyclePreviewPanel } from './CyclePreviewPanel';
-import type { CycleData, CyclePreview, Data, Run, Source } from './types';
+import type { Cycle, CycleData, CyclePreview, Data, Run, Source } from './types';
 
 function sourceFields(source: Source) {
   return {source_type:source.source_type,name:source.name,short_label:source.short_label,default_grade:source.default_grade?.toString()??''};
@@ -24,13 +24,14 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
   const empty = {source_type:'其他',name:'',short_label:'',default_grade:''};
   const [fields,setFields] = useState(empty);
   const [copyPreview,setCopyPreview] = useState<CyclePreview | null>(null);
+  const [socketDraft, setSocketDraft] = useState<{ cycleId: string; version: number; types: string[] } | null>(null);
   const [dirty,setDirty] = useState(false);
   const [editorEpoch,setEditorEpoch] = useState(0);
   const sourceDirty = sourceOpen && JSON.stringify(fields) !== JSON.stringify(source ? sourceFields(source) : empty);
   const savedSource = source && config?.sources.find(item => item.id === source.id);
   const sourceConflict = sourceOpen && source && (!savedSource || JSON.stringify(sourceFields(source)) !== JSON.stringify(sourceFields(savedSource)));
   const nameDirty = !!form && name !== (form === 'rename' ? config?.cycle.name ?? '' : '');
-  const unsaved = dirty || sourceDirty || nameDirty;
+  const unsaved = dirty || sourceDirty || nameDirty || socketDraft !== null;
   const version = data.workspace.cycles.find(c => c.id === cycleId)?.version;
   const sequence = useRef(0);
   async function read(id: string) {
@@ -66,7 +67,7 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
   const disabled=pending || loading;
   function changeCycle(id: string) {
     if (unsaved && !window.confirm('有未保存的输入，切换周期会丢弃。确定切换？')) return;
-    setCycleId(id);setConfig(null);setCopyPreview(null);setSourceOpen(false);setForm(null);
+    setSocketDraft(null);setCycleId(id);setConfig(null);setCopyPreview(null);setSourceOpen(false);setForm(null);
   }
   function removeCycle() {
     if (!cycle || unsaved || !window.confirm(`删除空周期「${cycle.name}」？有引用或配置的周期可归档。`)) return;
@@ -86,6 +87,7 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
   async function reloadConfig() {
     if (unsaved && !window.confirm('重新读取会丢弃未保存的输入，确定继续？')) return;
     if (await read(cycleId)) {
+      setSocketDraft(null);
       setSourceOpen(false);
       setEditorEpoch(epoch => epoch + 1);
     }
@@ -95,29 +97,39 @@ export function CycleSettings({ data, run, pending, onDirty }: { data: Data; run
     {data.workspace.cycles.length > 1 && <label>查看周期<select aria-label="查看周期" value={cycleId} disabled={disabled} onChange={e=>changeCycle(e.target.value)}>{data.workspace.cycles.map(c=><option key={c.id} value={c.id}>{c.name}{c.id===data.workspace.active_cycle_id?'（当前）':c.archived?'（已归档）':''}</option>)}</select></label>}
     {cycle && <div className="cycle-heading"><h3>{current?'当前周期：':'查看周期：'}{cycle.name}</h3>{cycle.archived && <span className="history-badge">已归档 · 只读</span>}</div>}
     {cycle && !form && !copyPreview && <div className="button-row">
-      <button disabled={disabled || dirty || sourceDirty} title={dirty || sourceDirty?'先保存或取消未完成的编辑，再复制周期':undefined} onClick={()=>{setName('');setForm('copy');}}>复制为新周期</button>
+      <button disabled={disabled || dirty || sourceDirty || !!socketDraft} title={dirty || sourceDirty?'先保存或取消未完成的编辑，再复制周期':undefined} onClick={()=>{setName('');setForm('copy');}}>复制为新周期</button>
       {!current && !cycle.archived && <button disabled={disabled} onClick={()=>void run(()=>api('/workspace/active-cycle','PUT',{cycle_id:cycleId}),'已切换当前周期')}>设为当前周期</button>}
-      <button disabled={disabled || dirty || sourceDirty} title={dirty || sourceDirty?'先保存或取消未完成的编辑':undefined} onClick={()=>{setName('');setForm('create');}}>＋ 新建周期</button>
-      <details className="cycle-management menu-disclosure"><summary>管理周期</summary><div className="button-row">{!cycle.archived && <button disabled={disabled || sourceDirty} title={sourceDirty?'先保存或取消来源编辑':undefined} onClick={()=>{setName(cycle.name);setForm('rename');}}>修改周期名称</button>}<button disabled={disabled || dirty || sourceDirty || current} title={current?'当前使用的周期不能归档':undefined} onClick={()=>void run(()=>api(`/cycles/${cycleId}/archive`,'PUT',{expected_version:cycle.version,archived:!cycle.archived}),cycle.archived?'已恢复周期':'已归档周期')}>{cycle.archived?'恢复周期':'归档周期'}</button><button className="danger" disabled={disabled || unsaved} onClick={removeCycle}>删除空周期</button><button disabled={disabled} onClick={()=>void reloadConfig()}>重新读取</button></div></details>
+      <button disabled={disabled || dirty || sourceDirty || !!socketDraft} title={dirty || sourceDirty?'先保存或取消未完成的编辑':undefined} onClick={()=>{setName('');setForm('create');}}>＋ 新建周期</button>
+      <details className="cycle-management menu-disclosure"><summary>管理周期</summary><div className="button-row">{!cycle.archived && <button disabled={disabled || sourceDirty || !!socketDraft} title={sourceDirty?'先保存或取消来源编辑':undefined} onClick={()=>{setName(cycle.name);setForm('rename');}}>修改周期名称</button>}<button disabled={disabled || dirty || sourceDirty || !!socketDraft || current} title={current?'当前使用的周期不能归档':undefined} onClick={()=>void run(()=>api(`/cycles/${cycleId}/archive`,'PUT',{expected_version:cycle.version,archived:!cycle.archived}),cycle.archived?'已恢复周期':'已归档周期')}>{cycle.archived?'恢复周期':'归档周期'}</button><button className="danger" disabled={disabled || unsaved} onClick={removeCycle}>删除空周期</button><button disabled={disabled} onClick={()=>void reloadConfig()}>重新读取</button></div></details>
     </div>}
     </div>
-    {cycle && !form && <label className="check"><input type="checkbox" checked={!cycle.has_constitution_sockets} disabled={disabled || cycle.archived || unsaved} onChange={e => {
-      const noSockets = e.target.checked;
-      let committed = false;
-      setConfig(previous => previous ? { ...previous, cycle: { ...previous.cycle, has_constitution_sockets: !noSockets } } : previous);
-      void run(async () => {
-          const impact = await api<{version: number; worn: number; warehouse: number; drops: number}>(`/cycles/${cycle.id}/socket-impact`);
-          if (impact.version !== cycle.version) throw new Error('周期已变化，请重新读取后核对');
-          if (impact.worn + impact.warehouse + impact.drops > 0 && !window.confirm(`该规则影响本周期所有账号的非戒指装备：穿戴 ${impact.worn} 件、仓库 ${impact.warehouse} 件、掉落 ${impact.drops} 件。比较和体质计算将重新判断；原五行石等级保留。确认修改？`)) {
-            setConfig(previous => previous ? { ...previous, cycle } : previous);
-            return;
-          }
-        await api(`/cycles/${cycle.id}`, 'PUT', { name: cycle.name, expected_version: cycle.version, has_constitution_sockets: !noSockets });
-        committed = true;
-      }, '已更新周期体质孔规则').then(saved => {
-        if (!saved && !committed) setConfig(previous => previous?.cycle.id === cycle.id ? { ...previous, cycle: { ...previous.cycle, has_constitution_sockets: cycle.has_constitution_sockets } } : previous);
-      });
-    }}/>本周期装备均无体质孔（戒指始终无孔）</label>}
+    {cycle && !form && !copyPreview && <details className="optional-fields menu-disclosure">
+      <summary>达标时不要求体质孔 · {cycle.socket_exempt_types.split(',').filter(Boolean).length} 个部位</summary>
+      <p className="hint">勾选没有带孔更优选项的部位。两个戒指自动跳过。实际孔状态和五行石体质仍按装备记录。</p>
+      {!cycle.has_constitution_sockets && <p className="hint">旧版全周期设置已转换为各部位选项，请按实核对。旧版录入时保存为无孔的装备可逐件更正。</p>}
+      <fieldset className="button-row" aria-label="达标时不要求体质孔的部位" disabled={disabled || cycle.archived || dirty || sourceDirty}>
+        {data.workspace.slots.filter(slot => !slot.key.startsWith('ring')).map(slot => {
+          const types = socketDraft?.types ?? cycle.socket_exempt_types.split(',').filter(Boolean);
+          return <label className="check" key={slot.key}><input type="checkbox" checked={types.includes(slot.key)} onChange={e => {
+            const next = new Set(types);
+            if (e.target.checked) next.add(slot.key);
+            else next.delete(slot.key);
+            const ordered = data.workspace.slots.map(item => item.key).filter(key => next.has(key));
+            setSocketDraft(ordered.join(',') === cycle.socket_exempt_types ? null : {
+              cycleId: cycle.id, version: socketDraft?.version ?? cycle.version, types: ordered,
+            });
+          }}/>{slot.name}</label>;
+        })}
+      </fieldset>
+      {socketDraft && <div className="button-row">
+        <button disabled={disabled} type="button" onClick={() => setSocketDraft(null)}>取消比较规则修改</button>
+        <button disabled={disabled || cycle.archived || dirty || sourceDirty} type="button" className="primary" onClick={() => void run(async () => {
+          const saved = await api<Cycle>(`/cycles/${socketDraft.cycleId}`, 'PUT', { name: cycle.name, expected_version: socketDraft.version, socket_exempt_types: socketDraft.types.join(',') });
+          setConfig(old => old?.cycle.id === saved.id ? { ...old, cycle: saved } : old);
+          setSocketDraft(null);
+        }, '已更新周期体质孔规则')}>保存比较规则</button>
+      </div>}
+    </details>}
     {loadError && <p role="alert" className="message error">{loadError}<button disabled={disabled} onClick={()=>void read(cycleId)}>重试读取</button></p>}
     {loading && <p role="status" className="hint">正在读取周期配置…</p>}
     {form && !copyPreview && <form className="inline-form" onSubmit={e=>{e.preventDefault();void run(async()=>{

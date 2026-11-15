@@ -19,10 +19,10 @@ from starlette.concurrency import run_in_threadpool
 
 from .cycle_data import SPECS, validate_rows
 from .database import backup_database, make_engine, migrate, remove_snapshot
-from .domain import SLOT_KEYS, equipment_type
+from .domain import EQUIPMENT_TYPES, SLOT_KEYS, equipment_type
 from .drop_merge import merge_drop_rows
 from .models import Base, DataChangePreview
-from .schemas import AccountPreferences, AttachmentChoice, DataApplyInput, NamedInput, SourceInput, TemplateInput
+from .schemas import AccountPreferences, AttachmentChoice, CycleInput, DataApplyInput, NamedInput, SourceInput, TemplateInput
 from .services import audit, new_id, require
 
 MAX_BYTES = 32 * 1024 * 1024
@@ -30,7 +30,9 @@ TRANSIENT = {'cycle_change_previews', 'data_change_previews'}
 TABLES = [table for table in Base.metadata.sorted_tables if table.name not in TRANSIENT]
 TABLE_MAP = {table.name: table for table in TABLES}
 FORMAT = 'jx3-equipment-workspace'
-REVISION = '0010'
+REVISION = '0011'
+PRE_MANAGEMENT = ('0006', '0007', '0008', '0009')
+SUPPORTED_REVISIONS = (*PRE_MANAGEMENT, '0010', REVISION)
 RAID_COLUMNS = {'raid_10', 'raid_25pt', 'raid_25yx'}
 
 
@@ -164,6 +166,7 @@ def validate_business(tables):
     for row in tables['characters']:
         check(NamedInput, {k: row[k] for k in ('name', 'sort_order', 'archived')}, '角色')
     for row in tables['equipment_cycles']:
+        check(CycleInput, {'name': row['name'], 'socket_exempt_types': row['socket_exempt_types']}, '周期比较规则')
         if not row['name'].strip() or len(row['name']) > 100:
             reject('周期名称无效')
     sources = {r['id']: r for r in tables['equipment_sources']}
@@ -252,12 +255,12 @@ def fill_tables(session, tables):
 def validate_document(payload, directory):
     if not isinstance(payload, dict) or set(payload) != {'format', 'format_version', 'schema_revision', 'exported_at', 'tables'}:
         reject('不是完整的工作空间 JSON 文件')
-    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in ('0006', '0007', '0008', '0009', REVISION):
+    if payload['format'] != FORMAT or type(payload['format_version']) is not int or payload['format_version'] != 1 or payload['schema_revision'] not in SUPPORTED_REVISIONS:
         reject('文件版本不兼容，请使用当前版本导出文件；旧数据库备份请按停机恢复说明处理')
     if not isinstance(payload['exported_at'], str):
         reject('导出时间格式无效')
     tables = payload['tables']
-    if payload['schema_revision'] != REVISION and isinstance(tables, dict):
+    if payload['schema_revision'] in PRE_MANAGEMENT and isinstance(tables, dict):
         old_tables = set(TABLE_MAP) - {'creation_receipts', 'raid_cd_settings'}
         if set(tables) != old_tables:
             reject('旧版工作空间数据表不匹配')
@@ -273,12 +276,20 @@ def validate_document(payload, directory):
         tables['creation_receipts'] = []
         tables['raid_cd_settings'] = [{'id': 1, 'enabled': False, 'version': 0, 'cursor_10': None, 'cursor_25': None, 'changed_at': None}]
     if payload['schema_revision'] in ('0006', '0007') and isinstance(tables, dict) and isinstance(tables.get('equipment_cycles'), list):
-        old_columns = {column.name for column in TABLE_MAP['equipment_cycles'].columns} - {'has_constitution_sockets'}
+        old_columns = {column.name for column in TABLE_MAP['equipment_cycles'].columns} - {'has_constitution_sockets', 'socket_exempt_types'}
         cycles = []
         for row in tables['equipment_cycles']:
             if not isinstance(row, dict) or set(row) != old_columns:
                 reject('旧版周期数据字段不匹配')
             cycles.append({**row, 'has_constitution_sockets': True})
+        tables = {**tables, 'equipment_cycles': cycles}
+    if payload['schema_revision'] != REVISION and isinstance(tables, dict) and isinstance(tables.get('equipment_cycles'), list):
+        cycles = []
+        for row in tables['equipment_cycles']:
+            if not isinstance(row, dict) or 'socket_exempt_types' in row or type(row.get('has_constitution_sockets')) is not bool:
+                reject('旧版周期数据字段不匹配')
+            exemptions = '' if row['has_constitution_sockets'] else ','.join(EQUIPMENT_TYPES[:-1])
+            cycles.append({**row, 'socket_exempt_types': exemptions})
         tables = {**tables, 'equipment_cycles': cycles}
     if payload['schema_revision'] == '0006' and isinstance(tables, dict) and isinstance(tables.get('characters'), list):
         old_columns = {column.name for column in TABLE_MAP['characters'].columns} - RAID_COLUMNS
@@ -290,7 +301,7 @@ def validate_document(payload, directory):
         tables = {**tables, 'characters': characters}
     validate_types(tables)
     validate_business(tables)
-    if payload['schema_revision'] != REVISION:
+    if payload['schema_revision'] in ('0006', '0007', '0008'):
         try:
             merged, changes = merge_drop_rows(tables['raid_drop_notes'])
         except ValueError as error:
@@ -348,23 +359,26 @@ def sqlite_document(raw, directory):
                 if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                     reject('备份完整性检查失败')
                 revisions = connection.execute('SELECT version_num FROM alembic_version').fetchall()
-                if revisions not in ([(REVISION,)], [('0009',)], [('0008',)], [('0007',)], [('0006',)]):
+                if len(revisions) != 1 or revisions[0][0] not in SUPPORTED_REVISIONS:
                     reject('此备份不属于当前数据库版本，请按停机恢复说明使用匹配版本再升级')
+                revision = revisions[0][0]
                 objects = connection.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','view','trigger')").fetchall()
                 expected = set(Base.metadata.tables) | {'alembic_version'}
-                if revisions != [(REVISION,)]:
+                if revision in PRE_MANAGEMENT:
                     expected -= {'creation_receipts', 'raid_cd_settings'}
                 if {r[0] for r in objects} != expected or any(kind != 'table' or 'VIRTUAL TABLE' in sql.upper() for _, kind, sql in objects):
                     reject('备份结构不匹配或包含非应用数据对象')
                 tables = {}
                 for table in TABLES:
-                    if revisions != [(REVISION,)] and table.name in ('creation_receipts', 'raid_cd_settings'):
+                    if revision in PRE_MANAGEMENT and table.name in ('creation_receipts', 'raid_cd_settings'):
                         continue
                     columns = [c for c in table.columns if not (revisions == [('0006',)] and table.name == 'characters' and c.name in RAID_COLUMNS)]
-                    if revisions != [(REVISION,)]:
+                    if revision in PRE_MANAGEMENT:
                         removed = {'version'} if table.name == 'game_accounts' else {'version', 'raid_version', 'history_complete'} if table.name == 'characters' else set()
                         columns = [c for c in columns if c.name not in removed]
-                    if revisions in ([('0006',)], [('0007',)]) and table.name == 'equipment_cycles':
+                    if revision != REVISION and table.name == 'equipment_cycles':
+                        columns = [c for c in columns if c.name != 'socket_exempt_types']
+                    if revision in ('0006', '0007') and table.name == 'equipment_cycles':
                         columns = [c for c in columns if c.name != 'has_constitution_sockets']
                     if {r[1] for r in connection.execute(f'PRAGMA table_info("{table.name}")')} != {c.name for c in columns}:
                         reject('备份字段与当前版本不一致')

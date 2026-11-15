@@ -114,7 +114,7 @@ def test_batch_stale_preview_never_partially_applies(client, setup, change):
         client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup, actual_grade=965)})
     elif change == 'cycle':
         cycle = client.get(f"/api/cycles/{setup['cycle']['id']}/data").json()['cycle']
-        client.put(f"/api/cycles/{cycle['id']}", json={'name': cycle['name'], 'expected_version': cycle['version'], 'has_constitution_sockets': False})
+        client.put(f"/api/cycles/{cycle['id']}", json={'name': cycle['name'], 'expected_version': cycle['version'], 'socket_exempt_types': 'hat'})
     else:
         add(client, setup, quantity=1, equipment_type='ring')
     assert apply(client, setup, token).status_code == 409
@@ -218,7 +218,7 @@ def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client
         with sqlite3.connect(database) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
-        assert migrated.get('/api/data/export').json()['schema_revision'] == '0010'
+        assert migrated.get('/api/data/export').json()['schema_revision'] == '0011'
         from scripts.verify_update import verify_tables
         assert verify_tables(migration_before, migrated.get('/api/data/export').json()) == 1
 
@@ -230,7 +230,7 @@ def test_deployment_verifier_checks_expected_defaults_and_detects_real_changes(c
     for cycle in before['tables']['equipment_cycles']:
         cycle.pop('has_constitution_sockets')
     expected, _ = expected_tables(before)
-    after = {'schema_revision': '0010', 'tables': expected}
+    after = {'schema_revision': '0011', 'tables': expected}
     assert verify_tables(before, after) == 0
     after['tables']['equipment_cycles'][0]['has_constitution_sockets'] = False
     with pytest.raises(AssertionError, match='Business data differs'):

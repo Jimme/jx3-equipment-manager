@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
                 await task
             engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.12", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.13", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -80,7 +80,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.12"}
+        return {"status": "ok", "version": "0.1.13"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -110,7 +110,7 @@ def create_app(data_dir: Path | None = None):
         fingerprint, replay = begin_creation(session, 'cycle', payload)
         if replay is not None:
             return replay
-        cycle = Cycle(id=new_id(), name=payload.name, archived=False, has_constitution_sockets=payload.has_constitution_sockets if payload.has_constitution_sockets is not None else True)
+        cycle = Cycle(id=new_id(), name=payload.name, archived=False, socket_exempt_types=payload.socket_exempt_types or '')
         session.add(cycle)
         session.flush()
         workspace = session.get(Workspace, 1)
@@ -119,18 +119,21 @@ def create_app(data_dir: Path | None = None):
         return finish_creation(session, payload, fingerprint, dump(cycle))
 
     @app.put("/api/cycles/{cycle_id}")
-    def edit_cycle(cycle_id: str, payload: CycleInput, session: Session = DB):
+    def edit_cycle(cycle_id: str, payload: CycleInput, session: Session = WRITE):
         cycle = require(session, Cycle, cycle_id)
         if cycle.archived:
             raise HTTPException(409, '归档周期只读，请先恢复再编辑')
+        if payload.socket_exempt_types is not None and payload.expected_version is None:
+            raise HTTPException(409, '修改比较规则需要周期版本，请重新读取')
         if payload.expected_version is not None and cycle.version != payload.expected_version:
             raise HTTPException(409, '周期配置已变化，请重新读取后编辑')
         before = dump(cycle)
         cycle.name = payload.name
-        if payload.has_constitution_sockets is not None:
-            cycle.has_constitution_sockets = payload.has_constitution_sockets
+        if payload.socket_exempt_types is not None:
+            cycle.socket_exempt_types = payload.socket_exempt_types
         cycle.version += 1
-        audit(session, "rename_cycle", cycle.id, before, dump(cycle))
+        operation = "edit_cycle_socket_rules" if payload.socket_exempt_types is not None else "rename_cycle"
+        audit(session, operation, cycle.id, before, dump(cycle))
         session.commit()
         return dump(cycle)
 
@@ -292,7 +295,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/templates")
     def templates(equipment_type: str | None = None, include_history: bool = True, session: Session = DB):
-        query = select(Template, CycleBaseStat.constitution, Cycle.has_constitution_sockets).join(Cycle, Cycle.id == Template.cycle_origin_id).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
+        query = select(Template, CycleBaseStat.constitution, Cycle.socket_exempt_types).join(Cycle, Cycle.id == Template.cycle_origin_id).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
         if equipment_type:
             query = query.where(Template.equipment_type == equipment_type)
         if not include_history:
@@ -322,7 +325,7 @@ def create_app(data_dir: Path | None = None):
         cells = {}
         for row in records:
             worn, template, config = row.WornEquipment, row.Template, row.EquipmentConfig
-            equipment = template_snapshot(template, row.base, row.socket_available) if template else None
+            equipment = template_snapshot(template, row.base, row.socket_exempt_types) if template else None
             comparison = compare(template.actual_grade if template else None,
                                  template.has_constitution_socket if template else False,
                                  template.green_stats_ok if template else False,

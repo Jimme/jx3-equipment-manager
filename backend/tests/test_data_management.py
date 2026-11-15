@@ -50,7 +50,7 @@ def seed_worn(client, setup):
 def test_empty_and_seeded_export_round_trip_preserves_null_and_zero(client,setup,tmp_path):
     seed_worn(client,setup)
     payload=export(client)
-    assert payload['schema_revision']=='0010'
+    assert payload['schema_revision']=='0011'
     assert 'cycle_change_previews' not in payload['tables'] and 'mutation_receipts' in payload['tables']
     assert payload['tables']['equipment_templates'][0]['base_constitution_override']==0
     assert payload['tables']['character_slot_settings'][0]['refine_level'] is None

@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import and_, select, update
 
-from .domain import SLOT_KEYS, equipment_type, socket_applicable
+from .domain import SLOT_KEYS, equipment_type, socket_applicable, socket_required
 from .models import Account, AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, Source, Template, WornEquipment
 from .schemas import EquipmentChoices, TemplateInput
 
@@ -41,9 +41,9 @@ def audit(session, operation, entity_id, before, after, account_id=None):
 
 
 def create_template(session, payload: TemplateInput):
-    cycle = require(session, Cycle, payload.cycle_origin_id)
+    require(session, Cycle, payload.cycle_origin_id)
     values = payload.model_dump()
-    if not socket_applicable(payload.equipment_type, cycle.has_constitution_sockets):
+    if not socket_applicable(payload.equipment_type):
         values['has_constitution_socket'] = False
     if payload.source_id:
         source = require(session, Source, payload.source_id)
@@ -81,17 +81,17 @@ def template_view(session, template):
         row = session.get(CycleBaseStat, (template.cycle_origin_id, template.actual_grade, template.equipment_type))
         value = row.constitution if row else None
     cycle = require(session, Cycle, template.cycle_origin_id)
-    return template_snapshot(template, value, cycle.has_constitution_sockets)
+    return template_snapshot(template, value, cycle.socket_exempt_types)
 
 
-def template_snapshot(template, default_constitution, socket_available):
+def template_snapshot(template, default_constitution, exemptions):
     override = template.base_constitution_override
     value = default_constitution if override is None else override
     stat = {'value': value, 'status': 'unknown' if value is None else 'known',
             'source': 'cycle' if override is None else 'override'}
-    applicable = socket_applicable(template.equipment_type, socket_available)
+    applicable = socket_required(template.equipment_type, exemptions)
     return {**dump(template), 'base_stat': stat, 'socket_applicable': applicable,
-            'has_constitution_socket': applicable and template.has_constitution_socket}
+            'has_constitution_socket': socket_applicable(template.equipment_type) and template.has_constitution_socket}
 
 
 def create_config(session, template, choices: EquipmentChoices | None = None):

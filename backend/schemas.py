@@ -2,6 +2,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from .domain import EQUIPMENT_TYPES
+
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Grade = Annotated[int, Field(strict=True, gt=0, le=2147483647)]
 Nonnegative = Annotated[int, Field(strict=True, ge=0, le=2147483647)]
@@ -41,8 +43,19 @@ class RaidCheckInput(Input):
 class CycleInput(Input):
     name: Name
     expected_version: Nonnegative | None = None
-    has_constitution_sockets: Annotated[bool, Field(strict=True)] | None = None
+    socket_exempt_types: Annotated[str, StringConstraints(max_length=80)] | None = None
     request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+
+    @field_validator('socket_exempt_types')
+    @classmethod
+    def valid_exemptions(cls, value):
+        if not value:
+            return value
+        items = value.split(',')
+        allowed = EQUIPMENT_TYPES[:-1]
+        if len(set(items)) != len(items) or not set(items) <= set(allowed):
+            raise ValueError('请选择不同的非戒指部位')
+        return ','.join(kind for kind in allowed if kind in items)
 
 
 class ActiveCycle(Input):
@@ -163,6 +176,10 @@ class InventoryAdd(MutationInput):
 class QuantityChange(MutationInput):
     expected_version: Nonnegative
     quantity: Nonnegative
+
+
+class WarehouseClear(MutationInput):
+    versions: dict[str, Nonnegative]
 
 
 class InventoryEdit(InventoryAdd):
