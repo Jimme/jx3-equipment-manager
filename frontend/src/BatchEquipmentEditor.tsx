@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { availableSources, equipmentInput, fieldsFor, socketApplicable, sourceLabel, type Fields } from './batchFields';
 import { ChoicesFields, choiceSummary, draftChoices, serializeChoices, type ChoicesDraft } from './ChoicesFields';
@@ -26,7 +26,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   const [copySlot, setCopySlot] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
   const [operationId, setOperationId] = useState('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
   const dirty = rows.some(row => row.action !== 'keep');
   const hasChanges = rows.some(row => row.selected && row.action !== 'keep');
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
@@ -148,14 +148,12 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
     }, '', undefined, false);
   }}>
     <div className="batch-toolbar">
-      <label>统一来源<select aria-label="批量统一来源" value={uniform.source} onChange={e => setUniformSource(e.target.value)}><option value="">请选择来源</option>{activeSources.map(source => <option key={source.id} value={source.id}>{sourceLabel(working, source)}</option>)}</select></label>
+      <label className="batch-common-source">统一来源<select aria-label="批量统一来源" disabled={pending} value={uniform.source} onChange={e => setUniformSource(e.target.value)}><option value="">请选择来源</option>{activeSources.map(source => <option key={source.id} value={source.id}>{sourceLabel(working, source)}</option>)}</select></label>
       <button type="button" disabled={pending} onClick={() => chooseScope('new')}>整套换装</button>
       <button type="button" disabled={pending} onClick={() => chooseScope('edit')}>选已穿戴</button>
       <button type="button" disabled={pending} onClick={() => chooseScope('empty')}>选空部位</button>
       <button type="button" disabled={pending} onClick={() => setRows(old => old.map(row => selectRow(row, !old.every(item => item.selected))))}>全选／取消全选</button>
-      <span>已勾选 {chosen.length} 行</span>
-    </div>
-    <details className="optional-fields menu-disclosure"><summary>对勾选行统一设置 · {chosen.length} 行</summary>
+      <details className="batch-tools menu-disclosure"><summary>对勾选行统一设置 · {chosen.length} 行</summary>
       <div className="batch-toolbar">
         <label>统一体质孔<select value={uniform.socket} onChange={e => setUniform({ ...uniform, socket: e.target.value })}><option value="">保留</option><option value="true">有</option><option value="false">无</option></select></label>
         <label>统一绿字<select value={uniform.green} onChange={e => setUniform({ ...uniform, green: e.target.value })}><option value="">保留</option><option value="true">达标</option><option value="false">未达标</option></select></label>
@@ -165,8 +163,10 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
         <button type="button" disabled={pending || !chosen.length || !copySlot} onClick={() => applyUniform(true)}>复制到勾选行</button></div>
       <p className="hint">复制原周期、来源、品级、孔和绿字；附魔、五彩石及单件体质仍逐行核对。</p>
       <button type="button" disabled={pending} onClick={() => void run(reread, '已读取最新状态，草稿仍保留，请逐行核对差异', undefined, false)}>读取最新状态核对</button>
-    </details>
+      </details>
+    </div>
     <fieldset disabled={pending}><div className="batch-scroll"><table className="daily-table batch-table">
+      <colgroup><col className="batch-part-col"/><col className="batch-action-col"/><col/><col className="batch-grade-col"/><col className="batch-check-col"/><col className="batch-check-col"/></colgroup>
       <thead><tr><th>部位／装备</th><th>操作</th><th>来源</th><th>品级</th><th>有体质孔</th><th>绿字达标</th></tr></thead>
       <tbody>{rows.map(row => {
         const name = working.workspace.slots.find(slot => slot.key === row.slot)!.name;
@@ -177,43 +177,41 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
         const source = sourceById.get(row.fields.source_id);
         const rowSources = availableSources(working, row.action !== 'new' ? cell.equipment?.source_id : undefined);
         const conflict = row.action !== 'keep' && (cell.version !== row.version || (row.action === 'warehouse' && (!stock || stock.version !== row.stockVersion)));
-        return <tr key={row.slot} className={conflict ? 'batch-conflict' : undefined}>
-          <th><label className="check"><input aria-label={`勾选${name}`} type="checkbox" checked={row.selected} onChange={e => update(row.slot, selectRow(row, e.target.checked))}/>{name}</label>
-            <small>{cell.equipment ? `${cell.label} · ${cell.equipment.actual_grade}` : '空位'}</small></th>
+        return <Fragment key={row.slot}><tr className={conflict ? 'batch-conflict' : undefined}>
+          <th><div className="batch-inline"><label className="check batch-part"><input aria-label={`勾选${name}`} type="checkbox" checked={row.selected} onChange={e => update(row.slot, selectRow(row, e.target.checked))}/>{name}</label>
+            {cell.equipment && <small className="batch-current">{cell.label} · {cell.equipment.actual_grade}</small>}</div></th>
           <td><select aria-label={`${name}批量操作`} value={row.action} onChange={e => {
             if (row.action !== 'keep' && !window.confirm('切换本行操作会重置本行输入，确定继续？')) return;
             changeAction(row, e.target.value as Action);
+            if (e.target.value === 'clear') setExpanded(null);
           }}><option value="keep">保持原样</option><option value="edit" disabled={!cell.equipment}>纠正记录</option><option value="new">{cell.equipment ? '手动换装' : '手动录入'}</option><option value="warehouse" disabled={!working.daily!.warehouse.some(item => item.equipment.equipment_type === typeFor(row.slot))}>从仓库穿戴</option><option value="clear" disabled={!cell.equipment}>清除穿戴</option></select>
-            {row.action !== 'keep' && <button type="button" className="quiet-button" onClick={() => {
-              if (window.confirm('放弃本行输入并使用最新记录？')) update(row.slot, initialRow(row.slot));
-            }}>放弃本行</button>}
             {conflict && <p className="error">本行记录或库存版本已变化，草稿仍保留。{stock && <span>最新可用 {stock.quantity} 件。</span>}
               <button type="button" onClick={() => update(row.slot, { version: cell.version, stockVersion: stock?.version ?? row.stockVersion })}>保留输入并采用最新版本</button></p>}
           </td>
-          <td>{row.action === 'clear' ? <span className="danger">清除装备</span> : <>
-            {row.action === 'warehouse' && <label>库存装备<select aria-label={`${name}批量库存`} required={required} value={row.warehouseId} onChange={e => {
+          <td>{row.action !== 'clear' && <div className="batch-inline batch-source">
+            {row.action === 'warehouse' && <select aria-label={`${name}批量库存`} required={required} value={row.warehouseId} onChange={e => {
               const item = warehouse.get(e.target.value);
               update(row.slot, { warehouseId: e.target.value, stockVersion: item?.version ?? 0, fields: fieldsFor(item?.equipment ?? null), choices: draftChoices(item?.choices) });
-            }}><option value="">请选择库存</option>{working.daily!.warehouse.filter(item => item.equipment.equipment_type === typeFor(row.slot)).map(item => <option key={item.id} value={item.id}>{item.label} · {item.equipment.actual_grade} 品 · {item.quantity} 件 · {choiceSummary(item.choices, typeFor(row.slot) === 'weapon')}</option>)}</select></label>}
+            }}><option value="">请选择库存</option>{working.daily!.warehouse.filter(item => item.equipment.equipment_type === typeFor(row.slot)).map(item => <option key={item.id} value={item.id}>{item.label} · {item.equipment.actual_grade} 品 · {item.quantity} 件{[item.choices.enchant, item.choices.rainbow].some(choice => choice.state !== 'unknown') ? ` · ${choiceSummary(item.choices, typeFor(row.slot) === 'weapon')}` : ''}</option>)}</select>}
             {manual && <>
               <select aria-label={`${name}批量来源`} required={required} value={row.fields.source_id} onChange={e => {
                 update(row.slot, { ...manualRow(row), selected: true, sourceOverride: true, fields: { ...row.fields, source_id: e.target.value } });
               }}><option value="">请选择来源</option>{rowSources.map(item => <option key={item.id} value={item.id}>{sourceLabel(working, item)}</option>)}</select>
             </>}
-            <details className="optional-fields menu-disclosure" onToggle={e => { const open = e.currentTarget.open; setExpanded(old => old[row.slot] === open ? old : { ...old, [row.slot]: open }); }}><summary>{name}更多属性</summary>
-              {expanded[row.slot] && <>{manual && <div className="form-grid">
-                <label>装备名称<input aria-label={`${name}批量装备名称`} maxLength={100} value={row.fields.name} onChange={e => field(row, { name: e.target.value })}/></label>
-                <label>基础体质覆盖<input aria-label={`${name}批量体质覆盖`} type="number" min="0" max="2147483647" value={row.fields.base_constitution_override} onChange={e => field(row, { base_constitution_override: e.target.value })}/></label>
-                <label>备注<input aria-label={`${name}批量备注`} maxLength={2000} value={row.fields.note} onChange={e => field(row, { note: e.target.value })}/></label>
-              </div>}
-              <ChoicesFields value={row.choices} onChange={choices => update(row.slot, { ...manualRow(row), selected: true, choices })} weapon={typeFor(row.slot) === 'weapon'} cycleId={source?.cycle_id ?? ''} equipmentType={typeFor(row.slot)}/></>}
-            </details>
-          </>}</td>
-          <td>{manual && <><span aria-label={`${name}批量品级`}>{source?.actual_grade ?? '—'}</span>
-            {row.sourceOverride && uniform.source && <button type="button" className="quiet-button" onClick={() => update(row.slot, { ...adoptSource({ ...row, sourceOverride: false }, uniform.source), selected: true })}>恢复统一</button>}</>}</td>
+            <button className="quiet-button batch-more" type="button" aria-label={`${name}更多属性`} aria-expanded={expanded === row.slot} onClick={() => setExpanded(open => open === row.slot ? null : row.slot)}>更多</button>
+          </div>}</td>
+          <td>{manual && <div className="batch-inline"><span aria-label={`${name}批量品级`}>{source?.actual_grade ?? '—'}</span>
+            {row.sourceOverride && uniform.source && <button type="button" className="quiet-button" onClick={() => update(row.slot, { ...adoptSource({ ...row, sourceOverride: false }, uniform.source), selected: true })}>恢复统一</button>}</div>}</td>
           <td className="batch-check">{manual && (hasSocket(row) ? <input type="checkbox" aria-label={`${name}体质孔`} checked={row.fields.has_constitution_socket === 'true'} onChange={e => field(row, { has_constitution_socket: String(e.target.checked) })}/> : <small>不适用</small>)}</td>
           <td className="batch-check">{manual && <input type="checkbox" aria-label={`${name}绿字`} checked={row.fields.green_stats_ok === 'true'} onChange={e => field(row, { green_stats_ok: String(e.target.checked) })}/>}</td>
-        </tr>;
+        </tr>{expanded === row.slot && row.action !== 'clear' && <tr className="batch-expanded"><td colSpan={6}>
+          {manual && <div className="form-grid">
+            <label>装备名称<input aria-label={`${name}批量装备名称`} maxLength={100} value={row.fields.name} onChange={e => field(row, { name: e.target.value })}/></label>
+            <label>基础体质覆盖<input aria-label={`${name}批量体质覆盖`} type="number" min="0" max="2147483647" value={row.fields.base_constitution_override} onChange={e => field(row, { base_constitution_override: e.target.value })}/></label>
+            <label>备注<input aria-label={`${name}批量备注`} maxLength={2000} value={row.fields.note} onChange={e => field(row, { note: e.target.value })}/></label>
+          </div>}
+          <ChoicesFields value={row.choices} onChange={choices => update(row.slot, { ...manualRow(row), selected: true, choices })} weapon={typeFor(row.slot) === 'weapon'} cycleId={source?.cycle_id ?? ''} equipmentType={typeFor(row.slot)}/>
+        </td></tr>}</Fragment>;
       })}</tbody>
     </table></div></fieldset>
     <div className="dialog-actions"><button type="button" disabled={pending} onClick={close}>取消</button><button className="primary" disabled={pending || !hasChanges}>预览整批更改</button></div>

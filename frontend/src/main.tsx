@@ -281,12 +281,11 @@ function App() {
           let number = 0;
           return columns.map(({ item, grade, start, add, id }) => {
             if (item) number++;
-            return <td className={`stock-cell${start ? ' stock-grade-start' : ''}${id === 'new' ? ' stock-new-column' : ''}`} data-stock-grade={grade ?? undefined} key={`${key}-${id}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
+            return <td className={`stock-cell${key === 'warehouse' ? ' warehouse-cell' : ''}${start ? ' stock-grade-start' : ''}${id === 'new' ? ' stock-new-column' : ''}`} data-stock-grade={grade ?? undefined} key={`${key}-${id}`} rowSpan={slot.key === 'ring1' ? 2 : undefined}>{item ?
             <><button className="stock-entry" disabled={pending} aria-label={`编辑${slot.name}${label}配置${number}`} title={socketSummary(item.equipment)} aria-description={socketSummary(item.equipment)} onClick={() => {
               setError(''); setInventoryDialog({ kind: 'edit', target: key, item, requestId: newRequestId() });
             }}>
               <span className="stock-main">{item.label} · {item.equipment.actual_grade ?? '品级未知'} · ×{item.quantity}</span>
-              <small className="stock-details">{choiceSummary(item.choices, equipmentType === 'weapon')}</small>
               {slot.key === 'ring1' && <small>两格通用</small>}
             </button>{key === 'drops' && <button className="stock-quick" disabled={pending} aria-label={`一键入库${slot.name}掉落配置${number}`} onClick={() => quickTransferDrop(item, run)}>入库 ×{item.quantity}</button>}</> :
             add ? <button className={`stock-entry${grade !== null ? ' stock-empty-grade' : ''}`} aria-label={`${slot.name}：${addLabel}${grade !== null ? ` ${grade} 品` : ''}`} disabled={pending || !cycleId} onClick={() => { setError(''); setInventoryDialog({ kind: 'add', target: key, equipmentType, grade: grade ?? undefined, requestId: newRequestId() }); }}><span aria-hidden="true">＋</span></button> : null}
@@ -296,7 +295,7 @@ function App() {
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.14</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.15</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>

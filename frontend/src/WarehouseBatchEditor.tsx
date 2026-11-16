@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api, optionalInteger } from './api';
 import { availableSources, equipmentInput, fieldsFor, socketApplicable, sourceLabel, type Fields } from './batchFields';
 import { ChoicesFields, choiceSummary, draftChoices, serializeChoices, type ChoicesDraft } from './ChoicesFields';
@@ -34,7 +34,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
   const [allStock, setAllStock] = useState<Record<string, number> | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [operation, setOperation] = useState('');
-  const [details, setDetails] = useState<Record<string, boolean>>({});
+  const [details, setDetails] = useState<string | null>(null);
   const endpoint = `/accounts/${data.accountId}/warehouse-batch`;
   const latest = useMemo(() => new Map(working.daily!.warehouse.map(item => [item.id, item])), [working.daily]);
   const activeSources = useMemo(() => availableSources(working), [working]);
@@ -121,7 +121,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
   }}>
     <fieldset disabled={pending}>
       <div className="batch-toolbar">
-        <label>统一来源<select aria-label="统一来源" value={commonSource} onChange={e => {
+        <label className="batch-common-source">统一来源<select aria-label="统一来源" value={commonSource} onChange={e => {
           const value = e.target.value;
           setCommonSource(value);
           if (value) setRows(old => old.map(row => row.selected ? adoptCommon(row, value) : row));
@@ -139,6 +139,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
       </div></details>}
       <p className="hint">已选 {selected.length} 行，共 {selected.reduce((total, row) => total + (optionalInteger(row.quantity) ?? 0), 0)} 件{hidden > 0 && `，含 ${hidden} 个筛选隐藏项`}{whole && !allStock && '。已读取最新记录，请重新选择全仓。'}</p>
       <div className="batch-scroll"><table className="daily-table batch-table warehouse-batch-table">
+        <colgroup><col className="batch-part-col"/><col/><col className="batch-grade-col"/><col className="batch-quantity-col"/><col className="batch-check-col"/><col className="batch-check-col"/></colgroup>
         <thead><tr><th>部位／装备</th><th>来源</th><th>品级</th><th>件数</th><th>有体质孔</th><th>绿字达标</th></tr></thead>
         <tbody>{visible.map(row => {
           const name = names.get(row.type)!;
@@ -147,33 +148,30 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
           const required = row.selected && row.changed;
           const source = sourceById.get(row.fields.source_id);
           const rowSources = availableSources(working, row.original?.equipment.source_id);
-          return <tr key={row.id} className={conflict ? 'batch-conflict' : undefined}>
-            <th><label className="check"><input type="checkbox" checked={row.selected} onChange={e => {
+          return <Fragment key={row.id}><tr className={conflict ? 'batch-conflict' : undefined}>
+            <th><div className="batch-inline"><label className="check batch-part"><input type="checkbox" checked={row.selected} onChange={e => {
               const checked = e.target.checked;
               if (row.original) { setWhole(false); setAllStock(null); }
               update(row, { ...(checked ? adoptCommon(row, commonSource) : row), selected: checked }, false);
-            }}/>{name}</label>{row.original ? <small>{row.original.label} · {row.original.equipment.actual_grade} · {choiceSummary(row.original.choices, row.type === 'weapon')}</small>
-              : <button type="button" className="quiet-button" onClick={() => setRows(old => old.filter(item => item.id !== row.id))}>移除此新增行</button>}
+            }}/>{name}</label>{row.original ? <small className="batch-current">{row.original.label} · {row.original.equipment.actual_grade}</small>
+              : <button type="button" className="quiet-button batch-more" onClick={() => setRows(old => old.filter(item => item.id !== row.id))}>移除</button>}</div>
               {conflict && <small>{item ? `最新 ${item.quantity} 件` : '库存已耗尽或移除'} {item && <button type="button" onClick={() => update(row, { original: item }, false)}>核对后采用最新件数上限</button>}</small>}
             </th>
-            <td><select aria-label={`${name}仓库来源`} required={required} value={row.fields.source_id} onChange={e => {
+            <td><div className="batch-inline batch-source"><select aria-label={`${name}仓库来源`} required={required} value={row.fields.source_id} onChange={e => {
               update(row, { sourceOverride: true, fields: { ...row.fields, source_id: e.target.value } });
             }}><option value="">请选择来源</option>{rowSources.map(item => <option key={item.id} value={item.id}>{sourceLabel(working, item)}</option>)}</select>
-              <details className="optional-fields" onToggle={e => { const open = e.currentTarget.open; setDetails(old => old[row.id] === open ? old : { ...old, [row.id]: open }); }}>
-                <summary>更多属性</summary>{details[row.id] && <>
-                  <label>名称<input maxLength={100} value={row.fields.name} onChange={e => field(row, { name: e.target.value })}/></label>
-                  <label>基础体质覆盖<input type="number" min="0" max="2147483647" value={row.fields.base_constitution_override} onChange={e => field(row, { base_constitution_override: e.target.value })}/></label>
-                  <label>备注<input maxLength={2000} value={row.fields.note} onChange={e => field(row, { note: e.target.value })}/></label>
-                  <ChoicesFields value={row.choices} onChange={choices => update(row, { choices })} weapon={row.type === 'weapon'} cycleId={source?.cycle_id ?? ''} equipmentType={row.type}/>
-                </>}
-              </details>
-            </td>
-            <td><span aria-label={`${name}仓库品级`}>{source?.actual_grade ?? '—'}</span>
-              {row.sourceOverride && commonSource && <button type="button" className="quiet-button" onClick={() => update(row, adoptCommon({ ...row, sourceOverride: false, selected: true }, commonSource))}>恢复统一</button>}</td>
-            <td><input aria-label={`${name}仓库件数`} required={required} type="number" min="1" max={item?.quantity ?? row.original?.quantity ?? 2147483647} value={row.quantity} onChange={e => update(row, { quantity: e.target.value })}/>{row.original && <small>更正／原 {row.original.quantity} 件</small>}</td>
+              <button className="quiet-button batch-more" type="button" aria-label={`${name}更多属性`} aria-expanded={details === row.id} onClick={() => setDetails(open => open === row.id ? null : row.id)}>更多</button>
+            </div></td>
+            <td><div className="batch-inline"><span aria-label={`${name}仓库品级`}>{source?.actual_grade ?? '—'}</span>
+              {row.sourceOverride && commonSource && <button type="button" className="quiet-button" onClick={() => update(row, adoptCommon({ ...row, sourceOverride: false, selected: true }, commonSource))}>恢复统一</button>}</div></td>
+            <td><div className="batch-inline"><input aria-label={`${name}仓库件数`} required={required} type="number" min="1" max={item?.quantity ?? row.original?.quantity ?? 2147483647} value={row.quantity} onChange={e => update(row, { quantity: e.target.value })}/>{row.original && <small className="batch-current">/ {row.original.quantity}</small>}</div></td>
             <td className="batch-check">{socketApplicable(row.type) ? <input aria-label={`${name}仓库体质孔`} type="checkbox" checked={row.fields.has_constitution_socket === 'true'} onChange={e => field(row, { has_constitution_socket: String(e.target.checked) })}/> : <small>不适用</small>}</td>
             <td className="batch-check"><input aria-label={`${name}仓库绿字`} type="checkbox" checked={row.fields.green_stats_ok === 'true'} onChange={e => field(row, { green_stats_ok: String(e.target.checked) })}/></td>
-          </tr>;
+          </tr>{details === row.id && <tr className="batch-expanded"><td colSpan={6}><div className="form-grid">
+            <label>名称<input maxLength={100} value={row.fields.name} onChange={e => field(row, { name: e.target.value })}/></label>
+            <label>基础体质覆盖<input type="number" min="0" max="2147483647" value={row.fields.base_constitution_override} onChange={e => field(row, { base_constitution_override: e.target.value })}/></label>
+            <label>备注<input maxLength={2000} value={row.fields.note} onChange={e => field(row, { note: e.target.value })}/></label>
+          </div><ChoicesFields value={row.choices} onChange={choices => update(row, { choices })} weapon={row.type === 'weapon'} cycleId={source?.cycle_id ?? ''} equipmentType={row.type}/></td></tr>}</Fragment>;
         })}</tbody>
       </table></div>
     </fieldset>

@@ -39,7 +39,7 @@ def main():
     parser.add_argument('phase', choices=['before', 'after'])
     parser.add_argument('--url', required=True, help='Application URL without /api')
     parser.add_argument('--state', type=Path, default=Path('.tools/update-verification.json'))
-    parser.add_argument('--version', default='0.1.14')
+    parser.add_argument('--version', default='0.1.15')
     args = parser.parse_args()
     if '.tools' not in args.state.resolve().parts:
         parser.error('Private update state must be stored under .tools')

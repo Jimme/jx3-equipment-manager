@@ -126,7 +126,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
         {!data.cycleId && <p className="hint">请先在“周期与来源”中创建装备周期。</p>}
         {items.length === 0 ? <p className="small-empty">{tab === 'warehouse' ? '共享仓库还没有库存。' : '本次还没有记录掉落。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>装备</th><th>数量</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
           <td><strong>{!equipmentType && `${equipmentName(data, item.equipment.equipment_type)} · `}{item.label} · {item.equipment.actual_grade} 品</strong>
-            <details className="item-details"><summary>{choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}</summary><p>{item.equipment.source_name}{item.equipment.name && ` · ${item.equipment.name}`}</p>{item.equipment.note && <p>{item.equipment.note}</p>}</details>
+            <details className="item-details"><summary>详情</summary><p>{item.equipment.source_name}{item.equipment.name && ` · ${item.equipment.name}`}</p><p>{choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}</p>{item.equipment.note && <p>{item.equipment.note}</p>}</details>
           </td>
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
           <td><div className="button-row">
@@ -150,7 +150,7 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
         {data.matrix!.account.target_grade === null ? <p className="small-empty">请先设置目标品级，再查看缺口明细。</p> : <>
           <div className="gap-filters">{data.matrix!.characters.length > 1 && <label>角色<select aria-label="缺口角色" value={characterFilter} onChange={e => setCharacterFilter(e.target.value)}><option value="">全部角色</option>{data.matrix!.characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}<label className="check"><input type="checkbox" checked={improvementsOnly} onChange={e => setImprovementsOnly(e.target.checked)}/>只看仓库可改善</label><span className="hint">确认穿戴后才扣库存</span></div>
           {visibleGaps.length === 0 ? <p className="small-empty">{improvementsOnly ? '当前没有可改善项，可取消筛选查看全部缺口。' : '当前筛选下没有缺口记录。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>角色 / 部位</th><th>当前装备</th><th>未达标原因</th><th>可改善的共享库存</th></tr></thead><tbody>{visibleGaps.map(gap => <tr key={`${gap.character_id}:${gap.slot}`}>
-            <td>{gap.character_name}<small>{gap.slot_name}</small></td><td>{gap.current_label}<small>{gap.actual_grade !== null && `${gap.actual_grade} 品`}</small></td>
+            <td>{gap.character_name} · {gap.slot_name}</td><td>{gap.current_label}{gap.actual_grade !== null && ` · ${gap.actual_grade} 品`}</td>
             <td>{gap.reasons.join('；')}</td><td>{gap.candidate_ids.length === 0 ? <span className="hint">暂无匹配库存</span> : <div className="candidate-list">{gap.candidate_ids.map(id => {
               const item = warehouseById.get(id);
               if (!item) return null;

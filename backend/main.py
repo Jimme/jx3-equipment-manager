@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
                 await task
             engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.14", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.15", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -80,7 +80,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.14"}
+        return {"status": "ok", "version": app.version}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):

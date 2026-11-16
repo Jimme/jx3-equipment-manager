@@ -79,6 +79,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Local.ps1 -Br
 
 0.1.14 使用 0012 来源绑定结构，从空白数据目录初始化。新版仅接受 0012 JSON/SQLite 备份。旧目录与 0.1.13 镜像配对留作回退，详细切换方法见群晖部署说明。
 
+从 0.1.14 升到 0.1.15 时继续使用现有数据目录和 0012 数据库。此版本调整批量录入与仓库的显示布局。
+
 维护者可用 `scripts/verify_update.py before/after --url http://NAS-IP:8088 --state .tools/update-verification.json` 检查同结构更新。前后校验 SQLite 完整性、外键和全部业务记录。核验文件包含私人数据，保存在受控的 `.tools` 目录。
 
 ## 开发和发布

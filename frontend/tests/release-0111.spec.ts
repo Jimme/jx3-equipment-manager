@@ -23,7 +23,7 @@ test('0.1.11：来源切换带出品级、完整预览、直接删除、勾选�
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '0111浏览器角色 批量录入装备', exact: true }).click();
   await dialog.getByLabel('帽子批量操作', { exact: true }).selectOption('edit');
-  await dialog.getByText('帽子更多属性', { exact: true }).click();
+  await dialog.getByRole('button', { name: '帽子更多属性', exact: true }).click();
   await dialog.getByLabel('帽子批量体质覆盖', { exact: true }).fill('99');
   await dialog.getByLabel('帽子批量装备名称', { exact: true }).fill('预览名称示意');
   await dialog.getByRole('button', { name: '预览整批更改', exact: true }).click();
