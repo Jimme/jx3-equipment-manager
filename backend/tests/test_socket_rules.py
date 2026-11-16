@@ -1,14 +1,4 @@
-from .conftest import legacy_document, legacy_database_columns
-import copy
-import json
-import sqlite3
-from shutil import copyfile
-
-from fastapi.testclient import TestClient
-
 from .conftest import equipment_payload, equipment_url
-from backend.domain import EQUIPMENT_TYPES
-from backend.main import create_app
 
 
 def test_cycle_and_ring_socket_rules_keep_original_cycle_and_stone_levels(client, setup):
@@ -51,32 +41,9 @@ def test_cycle_and_ring_socket_rules_keep_original_cycle_and_stone_levels(client
     assert not any(gap['slot'] == 'hat' for gap in client.get(account + '/daily').json()['gaps'])
     cycle = client.get(f'/api/cycles/{cycle_id}/data').json()['cycle']
     preview = client.post(f'/api/cycles/{cycle_id}/copy-preview', json={
-        'name': '复制无孔周期', 'expected_version': cycle['version']}).json()
+        'name': '复制无孔周期', 'expected_version': cycle['version'], 'source_ids': [setup['source']['id']]}).json()
     result = client.post(f"/api/cycles/{cycle_id}/changes/{preview['preview_id']}/apply").json()
     assert client.get(f"/api/cycles/{result['cycle_id']}/data").json()['cycle']['socket_exempt_types'] == 'hat'
-
-
-def test_previous_cycle_settings_import_and_sqlite_restore_default_to_socket_support(client, setup, tmp_path):
-    current = client.get('/api/data/export').json()
-    legacy = copy.deepcopy(current)
-    legacy = legacy_document(legacy, '0007')
-    for cycle in legacy['tables']['equipment_cycles']:
-        cycle.pop('has_constitution_sockets')
-    response = client.post('/api/data/import-preview', content=json.dumps(legacy).encode())
-    assert response.status_code == 200, response.text
-    assert not response.json()['unchanged']  # Legacy roles gain conservative history metadata.
-
-    name = client.post('/api/data/backups').json()['name']
-    path = tmp_path / 'previous.sqlite3'
-    path.write_bytes(client.get('/api/data/backups/' + name).content)
-    with sqlite3.connect(path) as connection:
-        legacy_database_columns(connection)
-        connection.execute('ALTER TABLE equipment_cycles DROP COLUMN has_constitution_sockets')
-        connection.execute("UPDATE alembic_version SET version_num='0007'")
-    connection.close()
-    response = client.post('/api/data/restore-preview', content=path.read_bytes())
-    assert response.status_code == 200, response.text
-    assert not response.json()['unchanged']  # Legacy roles gain conservative history metadata.
 
 
 def test_exemption_by_slot_uses_actual_socket_for_growth(client, setup):
@@ -103,32 +70,3 @@ def test_exemption_by_slot_uses_actual_socket_for_growth(client, setup):
     legs = next(row for row in report['slots'] if row['slot'] == 'legs')
     assert legs['socket_applicable'] and legs['components']['stone']['value'] == 46
     assert client.get(account + '/matrix').json()['cells'][char]['legs']['equipment']['has_constitution_socket']
-
-
-def test_0010_import_migrates_cycle_exemption_and_preserves_template_flags(client, setup, tmp_path):
-    assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup)}).status_code == 200
-    current = client.get('/api/data/export').json()
-    legacy = legacy_document(current, '0010')
-    legacy['tables']['equipment_cycles'][0]['has_constitution_sockets'] = False
-    from backend.data_management import sqlite_document, validate_document
-    expected = ','.join(EQUIPMENT_TYPES[:-1])
-    assert validate_document(legacy, tmp_path)['equipment_cycles'][0]['socket_exempt_types'] == expected
-    backup = client.post('/api/data/backups').json()['name']
-    path = tmp_path / 'old-0010.sqlite3'
-    path.write_bytes(client.get('/api/data/backups/' + backup).content)
-    with sqlite3.connect(path) as db:
-        db.execute('ALTER TABLE equipment_cycles DROP COLUMN socket_exempt_types')
-        db.execute('UPDATE equipment_cycles SET has_constitution_sockets=0')
-        db.execute("UPDATE alembic_version SET version_num='0010'")
-    db.close()
-    restored = sqlite_document(path.read_bytes(), tmp_path)
-    assert restored['equipment_cycles'][0]['socket_exempt_types'] == expected
-    assert restored['equipment_templates'][0]['has_constitution_socket'] is True
-    live = tmp_path / 'migrated'
-    live.mkdir()
-    copyfile(path, live / 'app.sqlite3')
-    from scripts.verify_update import verify_tables
-    with TestClient(create_app(live)) as migrated:
-        assert verify_tables(legacy, migrated.get('/api/data/export').json()) == 0
-        before = migrated.get('/api/data/backups').json()
-        assert any(item['name'].startswith('before-migration-') for item in before)

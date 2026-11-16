@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .database import ROOT, get_data_dir, make_engine, migrate
 from .domain import SLOT_KEYS, SLOTS, compare, equipment_type, label
 from .models import Account, AuditEvent, Character, CharacterCalculation, Cycle, CycleBaseStat, EquipmentConfig, RaidDrop, SlotSetting, Source, Template, WarehouseStack, Workspace, WornEquipment
-from .services import BASE_STAT_MATCH, new_id, dump, require, audit, create_template, create_config, choices_for, template_snapshot
+from .services import BASE_STAT_MATCH, new_id, dump, require, audit, create_template, create_config, choices_for, template_snapshot, template_view
 from .inventory import make_inventory_router
 from .equipment_batch import make_batch_router
 from .warehouse_batch import make_warehouse_batch_router
@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
                 await task
             engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.13", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.14", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -80,7 +80,7 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/health")
     def health(session: Session = DB):
         session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": "0.1.13"}
+        return {"status": "ok", "version": "0.1.14"}
 
     @app.get("/api/workspace")
     def workspace(session: Session = DB):
@@ -236,6 +236,10 @@ def create_app(data_dir: Path | None = None):
         session.commit()
         return {"cleared": payload.cleared, 'raid_version': character.raid_version, 'period': period}
 
+    @app.get("/api/sources")
+    def all_sources(session: Session = DB):
+        return [dump(source) for source in session.scalars(select(Source).order_by(Source.name, Source.id))]
+
     @app.get("/api/cycles/{cycle_id}/sources")
     def sources(cycle_id: str, session: Session = DB):
         require(session, Cycle, cycle_id)
@@ -259,7 +263,7 @@ def create_app(data_dir: Path | None = None):
         return finish_creation(session, payload, fingerprint, dump(source))
 
     @app.put("/api/cycles/{cycle_id}/sources/{source_id}")
-    def edit_source(cycle_id: str, source_id: str, payload: SourceInput, session: Session = DB):
+    def edit_source(cycle_id: str, source_id: str, payload: SourceInput, session: Session = WRITE):
         cycle = require(session, Cycle, cycle_id)
         if cycle.archived:
             raise HTTPException(409, '归档周期只读，请先恢复再编辑')
@@ -268,6 +272,8 @@ def create_app(data_dir: Path | None = None):
         source = require(session, Source, source_id)
         if source.cycle_id != cycle_id:
             raise HTTPException(404, "此周期下没有该来源")
+        if source.actual_grade != payload.actual_grade and session.scalar(select(Template.id).where(Template.source_id == source_id).limit(1)):
+            raise HTTPException(409, '已有装备引用此来源，品级已锁定。可新增来源并更正装备。')
         before = dump(source)
         for key, value in payload.model_dump(exclude={'expected_version', 'request_id'}).items():
             setattr(source, key, value)
@@ -277,7 +283,7 @@ def create_app(data_dir: Path | None = None):
         return dump(source)
 
     @app.delete("/api/cycles/{cycle_id}/sources/{source_id}")
-    def delete_source(cycle_id: str, source_id: str, expected_version: int = Query(ge=0), session: Session = DB):
+    def delete_source(cycle_id: str, source_id: str, expected_version: int = Query(ge=0), session: Session = WRITE):
         cycle = require(session, Cycle, cycle_id)
         if cycle.archived:
             raise HTTPException(409, '归档周期只读，请先恢复再编辑')
@@ -286,7 +292,8 @@ def create_app(data_dir: Path | None = None):
         source = require(session, Source, source_id)
         if source.cycle_id != cycle_id:
             raise HTTPException(404, '此周期下没有该来源')
-        session.execute(update(Template).where(Template.source_id == source_id).values(source_id=None))
+        if session.scalar(select(Template.id).where(Template.source_id == source_id).limit(1)):
+            raise HTTPException(409, '已有装备引用此来源，可停用以从录入列表隐藏')
         audit(session, 'delete_source', source_id, dump(source), None)
         session.delete(source)
         cycle.version += 1
@@ -295,7 +302,9 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/templates")
     def templates(equipment_type: str | None = None, include_history: bool = True, session: Session = DB):
-        query = select(Template, CycleBaseStat.constitution, Cycle.socket_exempt_types).join(Cycle, Cycle.id == Template.cycle_origin_id).outerjoin(CycleBaseStat, BASE_STAT_MATCH)
+        query = (select(Template, CycleBaseStat.constitution, Cycle.socket_exempt_types)
+                 .join(Source, Source.id == Template.source_id).join(Cycle, Cycle.id == Source.cycle_id)
+                 .outerjoin(CycleBaseStat, BASE_STAT_MATCH))
         if equipment_type:
             query = query.where(Template.equipment_type == equipment_type)
         if not include_history:
@@ -303,14 +312,14 @@ def create_app(data_dir: Path | None = None):
                 select(WarehouseStack.config_id).where(WarehouseStack.quantity > 0), select(RaidDrop.config_id))
             query = query.where(Template.id.in_(select(EquipmentConfig.template_id).where(EquipmentConfig.id.in_(held))))
         return [template_snapshot(template, base, available) for template, base, available in session.execute(
-            query.order_by(Template.actual_grade.desc(), Template.id))]
+            query.order_by(Source.actual_grade.desc(), Template.id))]
 
     @app.post("/api/templates", status_code=201)
-    def add_template(payload: TemplateInput, session: Session = DB):
+    def add_template(payload: TemplateInput, session: Session = WRITE):
         template = create_template(session, payload)
         audit(session, "save_template", template.id, None, dump(template))
         session.commit()
-        return dump(template)
+        return template_view(session, template)
 
     @app.get("/api/accounts/{account_id}/matrix")
     def matrix(account_id: str, include_archived: bool = False, session: Session = DB):
@@ -372,7 +381,12 @@ def create_app(data_dir: Path | None = None):
         if replay is not None:
             return replay
         worn = writable_slot(session, account_id, character_id, slot)
-        template = require(session, Template, payload.template_id) if payload.template_id else create_template(session, payload.equipment)
+        config = session.get(EquipmentConfig, worn.config_id) if worn.config_id else None
+        previous = session.get(Template, config.template_id) if config else None
+        current_source = previous.source_id if previous else None
+        template = require(session, Template, payload.template_id) if payload.template_id else create_template(session, payload.equipment, current_source)
+        if not template.source.active and template.source_id != current_source:
+            raise HTTPException(409, '此来源已停用，请选择仍在使用的来源')
         if template.equipment_type != equipment_type(slot):
             raise HTTPException(422, "装备模板与角色部位不匹配")
         config = create_config(session, template, payload.choices)

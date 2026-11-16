@@ -38,7 +38,7 @@ def test_creation_replay_and_new_intents_allow_same_names(client, setup, kind):
            'source': f"/api/cycles/{setup['cycle']['id']}/sources"}[kind]
     body = {'request_id': identifier(), 'name': '同名示意记录'}
     if kind == 'source':
-        body.update(source_type='测试', short_label='示', default_grade=1110)
+        body.update(source_type='测试', short_label='示', actual_grade=1110)
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(lambda _: client.post(url, json=body), range(2)))
     assert all(response.status_code == 201 for response in responses), [response.text for response in responses]

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .database import backup_database
 from .domain import socket_required, SLOTS, compare, equipment_type, label
-from .models import AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Template, WarehouseStack, WornEquipment
+from .models import AuditEvent, Character, Cycle, CycleBaseStat, EquipmentConfig, MutationReceipt, RaidDrop, RaidMemoState, Source, Template, WarehouseStack, WornEquipment
 from .schemas import DropBatchTransfer, DropClear, DropTransfer, EquipmentChoices, InventoryAdd, InventoryEdit, QuantityChange, WarehouseClear, WarehouseEquip
 from .services import (BASE_STAT_MATCH, active_account, choices_for, create_config, create_template, dump,
                        new_id, replace_worn, require, template_snapshot, template_view, writable_slot)
@@ -33,7 +33,8 @@ def inventory_rows(model):
     return (select(model, EquipmentConfig, Template, CycleBaseStat.constitution, Cycle.socket_exempt_types).select_from(model)
             .join(EquipmentConfig, EquipmentConfig.id == model.config_id)
             .join(Template, Template.id == EquipmentConfig.template_id)
-            .join(Cycle, Cycle.id == Template.cycle_origin_id)
+            .join(Source, Source.id == Template.source_id)
+            .join(Cycle, Cycle.id == Source.cycle_id)
             .outerjoin(CycleBaseStat, BASE_STAT_MATCH))
 
 
@@ -141,7 +142,8 @@ def make_inventory_router(engine, read_database):
             .join(Character, Character.id == WornEquipment.character_id)
             .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
             .outerjoin(Template, Template.id == EquipmentConfig.template_id)
-            .outerjoin(Cycle, Cycle.id == Template.cycle_origin_id)
+            .outerjoin(Source, Source.id == Template.source_id)
+            .outerjoin(Cycle, Cycle.id == Source.cycle_id)
             .where(Character.account_id == account_id, Character.archived.is_(False)))}
 
         def rank(grade, socket=False, green=False):
@@ -235,7 +237,8 @@ def make_inventory_router(engine, read_database):
         if payload.quantity > item.quantity or item.quantity < 1:
             raise HTTPException(409, '更正件数超过当前数量，请核对最新记录')
         before = dump(item)
-        template = create_template(session, payload.equipment)
+        old_template = require(session, Template, require(session, EquipmentConfig, item.config_id).template_id)
+        template = create_template(session, payload.equipment, old_template.source_id)
         config = create_config(session, template, payload.choices)
         if config.id == item.config_id:
             result = describe_item(session, item)

@@ -11,8 +11,8 @@ from .models import Account, AuditEvent, Character, Cycle, CycleBaseStat, Equipm
 from .schemas import EquipmentChoices, TemplateInput
 
 BASE_STAT_MATCH = and_(
-    CycleBaseStat.cycle_id == Template.cycle_origin_id,
-    CycleBaseStat.actual_grade == Template.actual_grade,
+    CycleBaseStat.cycle_id == Source.cycle_id,
+    CycleBaseStat.actual_grade == Source.actual_grade,
     CycleBaseStat.equipment_type == Template.equipment_type,
 )
 
@@ -40,29 +40,32 @@ def audit(session, operation, entity_id, before, after, account_id=None):
     ))
 
 
-def create_template(session, payload: TemplateInput):
-    require(session, Cycle, payload.cycle_origin_id)
-    values = payload.model_dump()
+def template_fields(session, payload: TemplateInput, existing_source_id=None):
+    source = require(session, Source, payload.source_id)
+    if not source.active and source.id != existing_source_id:
+        raise HTTPException(409, '此来源已停用，请选择仍在使用的来源')
+    if payload.expected_source_grade is not None and source.actual_grade != payload.expected_source_grade:
+        raise HTTPException(409, '来源品级已变化，请重新读取后核对')
+    values = payload.model_dump(exclude={'expected_source_grade'})
     if not socket_applicable(payload.equipment_type):
         values['has_constitution_socket'] = False
-    if payload.source_id:
-        source = require(session, Source, payload.source_id)
-        if source.cycle_id != payload.cycle_origin_id:
-            raise HTTPException(422, "来源不属于装备所选周期")
-        values.update(source_type=source.source_type, source_name=source.name, short_label=source.short_label)
-        if values["actual_grade"] is None:
-            values["actual_grade"] = source.default_grade
-    if values["actual_grade"] is None:
-        raise HTTPException(422, "请填写真实品级，或先设置来源默认品级")
-    # 来源 ID 只是预设链接；同一来源快照从已有模板复制时也应复用模板。
-    identity = {key: value for key, value in values.items() if key != 'source_id'}
-    existing = session.scalar(select(Template).filter_by(**identity).order_by(Template.id).limit(1))
+    return values, source
+
+
+def create_template(session, payload: TemplateInput, existing_source_id=None):
+    values, source = template_fields(session, payload, existing_source_id)
+    existing = session.scalar(select(Template).filter_by(**values).order_by(Template.id).limit(1))
     if existing:
         return existing
-    template = Template(id=new_id(), **values)
+    template = Template(id=new_id(), source=source, **values)
     session.add(template)
     session.flush()
     return template
+
+
+def equipment_details(values, source):
+    return {**values, 'cycle_origin_id': source.cycle_id, 'source_type': source.source_type,
+            'source_name': source.name, 'short_label': source.short_label, 'actual_grade': source.actual_grade}
 
 
 def choices_for(config):
@@ -90,7 +93,7 @@ def template_snapshot(template, default_constitution, exemptions):
     stat = {'value': value, 'status': 'unknown' if value is None else 'known',
             'source': 'cycle' if override is None else 'override'}
     applicable = socket_required(template.equipment_type, exemptions)
-    return {**dump(template), 'base_stat': stat, 'socket_applicable': applicable,
+    return {**equipment_details(dump(template), template.source), 'base_stat': stat, 'socket_applicable': applicable,
             'has_constitution_socket': socket_applicable(template.equipment_type) and template.has_constitution_socket}
 
 

@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('角色养成：集中编辑、明细、口径核实、换装保留及冲突恢复', async ({ page, request }) => {
@@ -14,7 +15,8 @@ test('角色养成：集中编辑、明细、口径核实、换装保留及冲�
     const applied=await request.post(`/api/cycles/${cycle.id}/changes/${preview.preview_id}/apply`);
     expect(applied.ok(),await applied.text()).toBe(true);
   };
-  const gear=(type:string,socket=false)=>({cycle_origin_id:cycle.id,equipment_type:type,actual_grade:1110,has_constitution_socket:socket,green_stats_ok:true,base_constitution_override:10});
+  const sourceId = await fixtureSource(request, cycle.id, 1110);
+  const gear=(type:string,socket=false)=>({source_id:sourceId,equipment_type:type,has_constitution_socket:socket,green_stats_ok:true,base_constitution_override:10});
   const choices=(weapon:boolean)=>({enchant:weapon?{state:'configured',name:'验收附魔'}:{state:'none'},rainbow:weapon?{state:'configured',name:'验收五彩石'}:{state:'unknown'}});
   for(const slot of slots){
     const type=slot.key.startsWith('ring')?'ring':slot.key;

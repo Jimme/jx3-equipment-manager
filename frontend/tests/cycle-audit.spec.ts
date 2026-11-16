@@ -7,8 +7,8 @@ test('周期设置验收：未保存输入保护、多表草稿及 CSV 替换边
   const cycle = await (await request.post('/api/cycles', { data: { name: '交互审核周期' } })).json();
   const other = await (await request.post('/api/cycles', { data: { name: '交互审核另一周期' } })).json();
   await request.put('/api/workspace/active-cycle', { data: { cycle_id: cycle.id } });
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '其他', name: '原来源', short_label: '原', default_grade: null } })).json();
-  await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '其他', name: '另一个来源', short_label: '另', default_grade: null } });
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '其他', name: '原来源', short_label: '原', actual_grade: 1110 } })).json();
+  await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '其他', name: '另一个来源', short_label: '另', actual_grade: 1110 } });
   await page.goto('/');
   await page.getByRole('button', { name: '周期与来源', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -102,7 +102,7 @@ test('周期设置验收：未保存输入保护、多表草稿及 CSV 替换边
   expect((await request.post(`/api/cycles/${cycle.id}/changes/${external.preview_id}/apply`)).ok()).toBeTruthy();
   const latestVersion = (await (await request.get(`/api/cycles/${cycle.id}/data`)).json()).cycle.version;
   expect((await request.put(`/api/cycles/${cycle.id}/sources/${source.id}`, {
-    data: { source_type: '其他', name: '另一页保存的来源', short_label: '原', default_grade: null, expected_version: latestVersion },
+    data: { source_type: '其他', name: '另一页保存的来源', short_label: '原', actual_grade: 1110, expected_version: latestVersion },
   })).ok()).toBeTruthy();
   await dialog.getByRole('button', { name: '重试读取', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('本表的已保存数据已变化');

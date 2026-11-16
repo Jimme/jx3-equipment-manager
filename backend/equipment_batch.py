@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session
 from .database import backup_database
 from .domain import SLOTS, equipment_type, label, socket_applicable, socket_required
 from .inventory import check_version, finish_operation, owned, start_operation
-from .models import Character, Cycle, DataChangePreview, EquipmentConfig, Source, Template, WarehouseStack
+from .models import Character, Cycle, DataChangePreview, EquipmentConfig, Template, WarehouseStack
 from .schemas import BatchEquipmentApply, BatchEquipmentInput, EquipmentChoices
-from .services import active_account, choices_for, create_config, create_template, dump, new_id, replace_worn, require, writable_slot
+from .services import active_account, choices_for, create_config, create_template, dump, equipment_details, template_fields, new_id, replace_worn, require, writable_slot
 
 
 def signature(value):
@@ -39,7 +39,7 @@ def prepare(session, account_id, character_id, payload):
         previous = session.get(Template, config.template_id) if config else None
         state['worn'].append(dump(worn))
         stock = None
-        equipment = entry.equipment
+        source = None
         if entry.action == 'warehouse':
             stock = owned(session, WarehouseStack, account_id, entry.warehouse_id)
             check_version(stock.version, entry.expected_stock_version)
@@ -49,39 +49,30 @@ def prepare(session, account_id, character_id, payload):
             template = require(session, Template, new_config.template_id)
             choices = entry.choices or EquipmentChoices.model_validate(choices_for(new_config))
             values = dump(template)
+            source = template.source
         elif entry.action in ('edit', 'new'):
             if entry.action == 'edit' and previous is None:
                 raise HTTPException(422, f'{dict(SLOTS)[entry.slot]}没有当前装备，不能纠错')
-            values = equipment.model_dump()
-            if equipment.source_id:
-                source = require(session, Source, equipment.source_id)
-                if source.cycle_id != equipment.cycle_origin_id:
-                    raise HTTPException(422, '来源不属于该行装备原周期')
-                state['sources'].setdefault(source.id, {key: getattr(source, key) for key in ('source_type', 'name', 'short_label')})
-                if equipment.actual_grade is None:
-                    state['sources'][source.id]['default_grade'] = source.default_grade
-                values.update(source_type=source.source_type, source_name=source.name, short_label=source.short_label)
-                if values['actual_grade'] is None:
-                    values['actual_grade'] = source.default_grade
-            if values['actual_grade'] is None:
-                raise HTTPException(422, f'{dict(SLOTS)[entry.slot]}请填写真实品级')
+            values, source = template_fields(session, entry.equipment, previous.source_id if previous and entry.action == 'edit' else None)
             choices = entry.choices or (EquipmentChoices.model_validate(choices_for(config)) if entry.action == 'edit' else EquipmentChoices())
         else:
             values, choices = None, None
         if values is not None:
             if values['equipment_type'] != equipment_type(entry.slot):
                 raise HTTPException(422, f'{dict(SLOTS)[entry.slot]}装备部位不匹配')
-            cycle = require(session, Cycle, values['cycle_origin_id'])
+            state['sources'][source.id] = dump(source)
+            cycle = require(session, Cycle, source.cycle_id)
             state['cycles'][cycle.id] = dump(cycle)
             applicable = socket_required(values['equipment_type'], cycle.socket_exempt_types)
             if not socket_applicable(values['equipment_type']):
                 values['has_constitution_socket'] = False
             if values['equipment_type'] != 'weapon' and choices.rainbow.state != 'unknown':
                 raise HTTPException(422, '只有武器可以记录五彩石')
-            after_label = f"{label(values['short_label'], values['has_constitution_socket'], values['green_stats_ok'], applicable)} · {values['actual_grade']} 品"
+            after_label = f"{label(source.short_label, values['has_constitution_socket'], values['green_stats_ok'], applicable)} · {source.actual_grade} 品"
         else:
             after_label = '清除穿戴'
         if previous:
+            state['sources'][previous.source_id] = dump(previous.source)
             cycle = require(session, Cycle, previous.cycle_origin_id)
             state['cycles'][cycle.id] = dump(cycle)
             applicable = socket_required(previous.equipment_type, cycle.socket_exempt_types)
@@ -92,13 +83,13 @@ def prepare(session, account_id, character_id, payload):
         if entry.action in ('edit', 'new') and previous:
             previous_values = dump(previous)
             previous_values['has_constitution_socket'] = socket_applicable(previous.equipment_type) and previous.has_constitution_socket
-            unchanged = all(previous_values[key] == value for key, value in values.items() if key not in ('id', 'source_id')) and choices.model_dump() == choices_for(config)
+            unchanged = all(previous_values[key] == value for key, value in values.items() if key != 'id') and choices.model_dump() == choices_for(config)
         if not unchanged:
-            rows.append((entry, worn, stock, choices))
+            rows.append((entry, worn, stock, choices, previous))
             changes.append({'slot': entry.slot, 'name': dict(SLOTS)[entry.slot], 'action': entry.action,
                             'before': before_label, 'after': after_label, 'warehouse_id': stock.id if stock else None,
-                            'before_equipment': dump(previous) if previous else None,
-                            'after_equipment': values,
+                            'before_equipment': equipment_details(dump(previous), previous.source) if previous else None,
+                            'after_equipment': equipment_details(values, source) if source else None,
                             'before_choices': choices_for(config) if config else None,
                             'after_choices': choices.model_dump() if choices else None})
     for stock_id, quantity in needed.items():
@@ -154,11 +145,11 @@ def make_batch_router(engine):
         except (OSError, sqlite3.Error, RuntimeError):
             raise HTTPException(503, '备份失败，整批未保存；请检查目录权限和空间')
         before, after = [], []
-        for entry, worn, stock, choices in rows:
+        for entry, worn, stock, choices, previous in rows:
             if entry.action == 'clear':
                 config_id = None
             else:
-                template = require(session, Template, require(session, EquipmentConfig, stock.config_id).template_id) if stock else create_template(session, entry.equipment)
+                template = require(session, Template, require(session, EquipmentConfig, stock.config_id).template_id) if stock else create_template(session, entry.equipment, previous.source_id if previous and entry.action == 'edit' else None)
                 config_id = create_config(session, template, choices).id
             old, new = replace_worn(session, worn, config_id, entry.expected_version)
             before.append(old)

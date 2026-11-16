@@ -1,25 +1,24 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
-test('0.1.11：保留手填品级、完整预览、直接删除、勾选入库和自动 CD 设置', async ({ page, request }) => {
+test('0.1.11：来源切换带出品级、完整预览、直接删除、勾选入库和自动 CD 设置', async ({ page, request }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const cycle = await (await request.post('/api/cycles', { data: { name: '0111浏览器示意周期' } })).json();
   const account = await (await request.post('/api/accounts', { data: { name: '0111浏览器示意账号' } })).json();
   const base = `/api/accounts/${account.id}`;
   const character = await (await request.post(base + '/characters', { data: { name: '0111浏览器角色' } })).json();
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '0111来源甲', short_label: '甲', default_grade: 1110 } })).json();
-  const other = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '0111来源乙', short_label: '乙', default_grade: 965 } })).json();
-  const gear = { cycle_origin_id: cycle.id, source_id: source.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true, base_constitution_override: 42 };
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '0111来源甲', short_label: '甲', actual_grade: 1110 } })).json();
+  const other = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '0111来源乙', short_label: '乙', actual_grade: 965 } })).json();
+  const highId = await fixtureSource(request, cycle.id, 1200);
+  const gear = { source_id: source.id, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true, base_constitution_override: 42 };
   await request.put(base + `/characters/${character.id}/equipment/hat`, { data: { expected_version: 0, equipment: gear } });
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
   const dialog = page.getByRole('dialog');
   await page.getByRole('button', { name: '0111浏览器角色 帽子', exact: true }).click();
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1200');
   await dialog.getByLabel('来源预设').selectOption(other.id);
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1200');
-  await dialog.getByRole('button', { name: '使用来源默认', exact: true }).click();
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('965');
+  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveText('965');
   page.once('dialog', prompt => prompt.accept());
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '0111浏览器角色 批量录入装备', exact: true }).click();
@@ -35,7 +34,7 @@ test('0.1.11：保留手填品级、完整预览、直接删除、勾选入库�
   await dialog.getByRole('button', { name: '确认整批保存并备份', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   for (const [grade, quantity] of [[1110, 2], [1200, 3]]) {
-    await request.post(base + '/drops', { data: { request_id: crypto.randomUUID(), equipment: { ...gear, actual_grade: grade }, quantity } });
+    await request.post(base + '/drops', { data: { request_id: crypto.randomUUID(), equipment: { ...gear, source_id: grade === 1110 ? source.id : highId }, quantity } });
   }
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await page.getByRole('button', { name: '团本掉落', exact: true }).click();
@@ -120,7 +119,10 @@ test('未知结果取消后仍可独立核对；单格冲突保留输入采用�
   const account = await (await request.post('/api/accounts', { data: { name: '0111恢复示意账号' } })).json();
   const base = `/api/accounts/${account.id}`;
   const character = await (await request.post(base + '/characters', { data: { name: '0111恢复角色' } })).json();
-  const gear = { cycle_origin_id: cycle.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true };
+  const sourceId = await fixtureSource(request, cycle.id, 1110);
+  const lowId = await fixtureSource(request, cycle.id, 965);
+  const highId = await fixtureSource(request, cycle.id, 1200);
+  const gear = { source_id: sourceId, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true };
   const stock = await (await request.post(base + '/warehouse', { data: { request_id: crypto.randomUUID(), equipment: gear, quantity: 2 } })).json();
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
@@ -140,13 +142,13 @@ test('未知结果取消后仍可独立核对；单格冲突保留输入采用�
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await page.getByRole('button', { name: '0111恢复角色 上衣', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1200');
-  await request.put(url, { data: { expected_version: 1, equipment: { ...gear, equipment_type: 'chest', actual_grade: 965 } } });
+  await dialog.getByLabel('来源预设', { exact: true }).selectOption(highId);
+  await request.put(url, { data: { expected_version: 1, equipment: { ...gear, equipment_type: 'chest', source_id: lowId } } });
   await dialog.getByRole('button', { name: '保存记录', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('此格装备已在其他页面修改');
   await dialog.getByRole('button', { name: '读取最新记录核对', exact: true }).click();
   await dialog.getByRole('button', { name: '保留输入并采用最新版本', exact: true }).click();
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1200');
+  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveText('1200');
   await dialog.getByRole('button', { name: '保存记录', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const matrix = await (await request.get(base + '/matrix')).json();

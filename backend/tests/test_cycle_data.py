@@ -54,10 +54,10 @@ def test_delete_source_preserves_recorded_equipment_snapshot(client, setup):
     version = state(client, setup)['cycle']['version']
     path = cycle_path(setup) + '/sources/' + setup['source']['id']
     assert client.delete(path, params={'expected_version': version - 1}).status_code == 409
-    assert client.delete(path, params={'expected_version': version}).json() == {'deleted': True}
-    assert state(client, setup)['sources'] == []
+    assert client.delete(path, params={'expected_version': version}).status_code == 409
+    assert len(state(client, setup)['sources']) == 1
     saved = client.get('/api/templates').json()[0]
-    assert saved['source_id'] is None
+    assert saved['source_id'] == setup['source']['id']
     assert saved['source_name'] == setup['source']['name']
     assert saved['short_label'] == setup['source']['short_label']
     assert saved['actual_grade'] == 1110
@@ -151,7 +151,7 @@ def test_invalid_dimensions_and_values_are_rejected(client, setup, kind, row):
 def test_stale_preview_from_source_edit_does_not_apply(client, setup):
     review = preview(client, setup, 'stone', [{'stone_level': 1, 'constitution': 0}])
     source = setup['source']
-    response = client.put(cycle_path(setup) + f"/sources/{source['id']}", json={'source_type': source['source_type'], 'name': source['name'], 'short_label': source['short_label'], 'default_grade': 1200})
+    response = client.put(cycle_path(setup) + f"/sources/{source['id']}", json={'source_type': source['source_type'], 'name': source['name'], 'short_label': source['short_label'], 'actual_grade': 1200})
     assert response.status_code == 200
     response = client.post(cycle_path(setup) + f"/changes/{review['preview_id']}/apply")
     assert response.status_code == 409
@@ -170,7 +170,7 @@ def test_preview_expiry_and_cross_cycle_rejected(client, setup):
 def test_copy_is_independent_and_old_equipment_keeps_origin(client, setup):
     client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup)})
     apply(client, setup, preview(client, setup, 'base', [{'actual_grade': 1110, 'equipment_type': 'hat', 'constitution': 0}]))
-    response = client.post(cycle_path(setup) + '/copy-preview', json={'expected_version': state(client, setup)['cycle']['version'], 'name': '复制的新周期'})
+    response = client.post(cycle_path(setup) + '/copy-preview', json={'expected_version': state(client, setup)['cycle']['version'], 'name': '复制的新周期', 'source_ids': [setup['source']['id']]})
     assert response.status_code == 200
     review = response.json()
     assert review['sources'] == 1
@@ -181,7 +181,7 @@ def test_copy_is_independent_and_old_equipment_keeps_origin(client, setup):
     assert new['cycle']['copied_from_id'] == setup['cycle']['id']
     assert new['tables']['base'][0]['constitution'] == 0
     assert new['sources'][0]['id'] != setup['source']['id']
-    assert new['sources'][0]['default_grade'] == 1110
+    assert new['sources'][0]['actual_grade'] == 1110
     assert client.get('/api/workspace').json()['active_cycle_id'] == result['cycle_id']
     changed = client.post(new_path + '/data/base/preview', json={'expected_version': new['cycle']['version'], 'rows': [{'actual_grade': 1110, 'equipment_type': 'hat', 'constitution': 999}]}).json()
     assert client.post(new_path + f"/changes/{changed['preview_id']}/apply").status_code == 200
@@ -255,7 +255,7 @@ def test_failed_apply_rolls_back_table_and_version_then_can_retry(client, setup,
 def test_stale_source_and_name_edits_do_not_overwrite_new_configuration(client, setup):
     version = state(client, setup)['cycle']['version']
     apply(client, setup, preview(client, setup, 'stone', [{'stone_level': 1, 'constitution': 0}]))
-    response = client.put(cycle_path(setup) + f"/sources/{setup['source']['id']}", json={'source_type':'测试','name':'不应保存','short_label':'旧','default_grade':1200,'expected_version':version})
+    response = client.put(cycle_path(setup) + f"/sources/{setup['source']['id']}", json={'source_type':'测试','name':'不应保存','short_label':'旧','actual_grade':1200,'expected_version':version})
     assert response.status_code == 409
     response = client.put(cycle_path(setup), json={'name':'不应保存','expected_version':version})
     assert response.status_code == 409

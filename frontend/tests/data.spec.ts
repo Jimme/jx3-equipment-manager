@@ -1,12 +1,14 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 test('数据维护：下载、无效文件、预览取消、冲突保护、JSON 导入及备份恢复', async ({page,request})=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const cycle=await (await request.post('/api/cycles',{data:{name:'数据验收周期'}})).json();
+  const sourceId = await fixtureSource(request, cycle.id, 1110);
   const account=await (await request.post('/api/accounts',{data:{name:'数据验收账号'}})).json();
   const character=await (await request.post(`/api/accounts/${account.id}/characters`,{data:{name:'数据验收角色'}})).json();
-  await request.put(`/api/accounts/${account.id}/characters/${character.id}/equipment/hat`,{data:{expected_version:0,equipment:{cycle_origin_id:cycle.id,equipment_type:'hat',actual_grade:1110,has_constitution_socket:true,green_stats_ok:true,base_constitution_override:0}}});
+  await request.put(`/api/accounts/${account.id}/characters/${character.id}/equipment/hat`,{data:{expected_version:0,equipment:{source_id: sourceId, equipment_type: 'hat',has_constitution_socket:true,green_stats_ok:true,base_constitution_override:0}}});
   await page.goto('/');
   await page.getByLabel('游戏账号',{exact:true}).selectOption(account.id);
   await page.getByRole('button',{name:'数据与备份',exact:true}).click();

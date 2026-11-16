@@ -79,7 +79,7 @@ function App() {
   const warehouse = useMemo(() => warehouseGroups(data?.daily?.warehouse), [data?.daily?.warehouse]);
   const drops = useMemo(() => indexStock(data?.daily?.drops), [data?.daily?.drops]);
   const grades = useMemo(() => [...new Set([
-    ...(data?.sources.map(s => s.default_grade) ?? []),
+    ...(data?.sources.map(s => s.actual_grade) ?? []),
     ...(data?.templates.map(t => t.actual_grade) ?? []),
     ...(data?.daily?.warehouse.map(item => item.equipment.actual_grade) ?? []),
     ...(data?.daily?.drops.map(item => item.equipment.actual_grade) ?? []),
@@ -97,7 +97,7 @@ function App() {
     const selectedCycle = workspace.active_cycle_id ?? '';
     const [matrix, sources, daily] = await Promise.all([
       activeAccount ? api<Matrix & { all_characters: Character[] }>(`/accounts/${activeAccount.id}/matrix?include_archived=true`) : Promise.resolve(null),
-      selectedCycle ? api<Source[]>(`/cycles/${selectedCycle}/sources`) : Promise.resolve([]),
+      api<Source[]>('/sources'),
       activeAccount ? api<DailyData>(`/accounts/${activeAccount.id}/daily?skip_unconfigured_gaps=true`) : Promise.resolve(null),
     ]);
     if (version !== loadVersion.current) return;
@@ -296,7 +296,7 @@ function App() {
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.13</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.14</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>
@@ -341,7 +341,12 @@ function EquipmentEditor({ data, editing, pending, run, close, savedClose, onDir
   const form = <EquipmentForm key={mode} data={data} type={type} current={editingExisting ? baseline.equipment : null} initialChoices={editingExisting ? baseline.choices : null} allowCopy={!editingExisting} pending={pending} run={run} close={close} savedClose={savedClose} onDirty={setDirty} lastEquipment={lastEquipment}
     submitLabel={mode === 'new' ? '确认更换装备' : editingExisting ? '保存记录' : '保存装备'}
     description={mode === 'new' ? '录入新装备；旧装备不回库，附魔和五彩石不继承。' : baseline.equipment ? [baseline.label, `${baseline.equipment.actual_grade}品`, ...baseline.reasons].join(' · ') : undefined}
-    onSave={async (equipment, choices) => { await api(path, 'PUT', { request_id: requestId, expected_version: baseline.version, equipment, choices }); saved({ ...equipment, id: '', actual_grade: equipment.actual_grade! }); }}
+    onSave={async (equipment, choices) => {
+      await api(path, 'PUT', { request_id: requestId, expected_version: baseline.version, equipment, choices });
+      const source = data.sources.find(item => item.id === equipment.source_id);
+      if (source) saved({ ...equipment, id: '', cycle_origin_id: source.cycle_id, source_type: source.source_type,
+        source_name: source.name, short_label: source.short_label, actual_grade: source.actual_grade });
+    }}
     actions={editingExisting && <button type="button" className="danger" onClick={() => { if (window.confirm('清除此格当前装备？旧装备不进入仓库。')) void run(() => api(`${path}?expected_version=${baseline.version}`, 'DELETE', { request_id: newRequestId() }), '已清除穿戴', savedClose); }}>清除穿戴</button>}/>;
   return <>
     <LatestEquipment accountId={editing.character.account_id} characterId={editing.character.id} slot={editing.slot} run={run} pending={pending} accept={setBaseline}/>

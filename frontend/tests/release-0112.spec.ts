@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('品级列、快捷整套录入和仓库混合批次', async ({ page, request }) => {
@@ -7,11 +8,12 @@ test('品级列、快捷整套录入和仓库混合批次', async ({ page, reque
   const account = await (await request.post('/api/accounts', { data: { name: '0112 示意账号' } })).json();
   const base = `/api/accounts/${account.id}`;
   const character = await (await request.post(base + '/characters', { data: { name: '0112 示意角色' } })).json();
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '示意来源', short_label: '示', default_grade: 1110 } })).json();
-  const low = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '另一示意来源', short_label: '另', default_grade: 965 } })).json();
-  const gear = { cycle_origin_id: cycle.id, source_id: source.id, has_constitution_socket: true, green_stats_ok: true };
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '示意来源', short_label: '示', actual_grade: 1110 } })).json();
+  const low = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '另一示意来源', short_label: '另', actual_grade: 965 } })).json();
+  const highId = await fixtureSource(request, cycle.id, 1200);
+  const gear = { source_id: source.id, has_constitution_socket: true, green_stats_ok: true };
   for (const [slot, grade, quantity] of [['hat', 1110, 3], ['chest', 965, 1], ['ring', 965, 2]] as const) {
-    expect((await request.post(base + '/warehouse', { data: { request_id: crypto.randomUUID(), equipment: { ...gear, equipment_type: slot, actual_grade: grade }, quantity } })).ok()).toBe(true);
+    expect((await request.post(base + '/warehouse', { data: { request_id: crypto.randomUUID(), equipment: { ...gear, equipment_type: slot, source_id: grade === 1110 ? source.id : low.id }, quantity } })).ok()).toBe(true);
   }
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
@@ -21,19 +23,18 @@ test('品级列、快捷整套录入和仓库混合批次', async ({ page, reque
   await expect(matrix.locator('[data-stock-grade="965"][rowspan="2"] .stock-main')).toContainText('×2');
   const dialog = page.getByRole('dialog');
   await page.getByRole('button', { name: '上衣：添加库存 1110 品', exact: true }).click();
-  await dialog.getByLabel('来源预设').selectOption(low.id);
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1110');
+  await dialog.getByLabel('来源预设').selectOption(source.id);
+  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveText('1110');
   page.once('dialog', prompt => prompt.accept());
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '0112 示意角色 批量录入装备', exact: true }).click();
-  const common = dialog.getByLabel('批量统一品级');
-  await common.fill('1110');
-  await dialog.getByLabel('批量统一来源').selectOption(source.id);
-  await expect(dialog.getByLabel('帽子批量品级')).toHaveValue('1110');
-  await dialog.getByLabel('上衣批量品级').fill('965');
-  await common.fill('1200');
-  await expect(dialog.getByLabel('帽子批量品级')).toHaveValue('1200');
-  await expect(dialog.getByLabel('上衣批量品级')).toHaveValue('965');
+  const common = dialog.getByLabel('批量统一来源');
+  await common.selectOption(source.id);
+  await expect(dialog.getByLabel('帽子批量品级')).toHaveText('1110');
+  await dialog.getByLabel('上衣批量来源').selectOption(low.id);
+  await common.selectOption(highId);
+  await expect(dialog.getByLabel('帽子批量品级')).toHaveText('1200');
+  await expect(dialog.getByLabel('上衣批量品级')).toHaveText('965');
   await dialog.getByLabel('帽子体质孔', { exact: true }).check();
   await dialog.getByLabel('帽子绿字', { exact: true }).check();
   await expect(dialog.getByLabel('戒指1体质孔')).toHaveCount(0);
@@ -49,14 +50,13 @@ test('品级列、快捷整套录入和仓库混合批次', async ({ page, reque
 
   await page.getByRole('button', { name: '批量更改仓库', exact: true }).click();
   const hat = dialog.getByRole('row').filter({ has: page.getByLabel('帽子仓库品级') });
-  await hat.getByLabel('帽子仓库品级').fill('965');
+  await hat.getByLabel('帽子仓库来源').selectOption(low.id);
   await hat.getByLabel('帽子仓库件数').fill('1');
   await dialog.getByLabel('新增部位').selectOption('weapon');
   await dialog.getByRole('button', { name: '添加一行', exact: true }).click();
-  await dialog.getByLabel('统一来源', { exact: true }).selectOption(source.id);
-  await dialog.getByLabel('统一品级', { exact: true }).fill('1200');
-  await expect(hat.getByLabel('帽子仓库品级')).toHaveValue('965');
-  await expect(dialog.getByLabel('武器仓库品级')).toHaveValue('1200');
+  await dialog.getByLabel('统一来源', { exact: true }).selectOption(highId);
+  await expect(hat.getByLabel('帽子仓库品级')).toHaveText('965');
+  await expect(dialog.getByLabel('武器仓库品级')).toHaveText('1200');
   await dialog.screenshot({ path: '../.tools/0112-warehouse-desktop.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

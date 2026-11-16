@@ -1,3 +1,4 @@
+import { selectSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄屏', async ({ page, request }) => {
@@ -57,7 +58,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(dialog.getByLabel('来源类型')).toHaveCount(0);
   await dialog.getByLabel('来源名称', { exact: true }).fill('测试普通来源');
   await dialog.getByLabel('来源简称', { exact: true }).fill('pt');
-  await dialog.getByLabel('默认真实品级').fill('1110');
+  await dialog.getByLabel('来源真实品级').fill('1110');
   await dialog.getByRole('button', { name: '保存来源', exact: true }).click();
   await expect(dialog.getByText('pt · 1110 品')).toBeVisible();
   await expect(dialog.getByLabel('来源名称', { exact: true })).toHaveCount(0);
@@ -68,9 +69,9 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await page.getByRole('button', { name: '测试角色1 帽子', exact: true }).click();
   await expect(dialog.getByLabel('基础体质覆盖')).not.toBeVisible();
   await expect(dialog.getByLabel('装备名称', { exact: true })).not.toBeVisible();
-  await dialog.getByLabel('来源预设', { exact: true }).selectOption({ label: '测试普通来源' });
+  await selectSource(dialog.getByLabel('来源预设', { exact: true }), '测试普通来源');
   await expect(dialog.getByLabel('装备来源名称')).toHaveCount(0);
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1110');
+  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveText('1110');
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '无', exact: true }).check();
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByRole('button', { name: /^保存(装备|记录)$/ }).click();
@@ -101,12 +102,13 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(cell).toHaveAccessibleDescription(/已达标/);
   await page.getByRole('button', { name: '周期与来源', exact: true }).click();
   await dialog.getByRole('button', { name: '编辑来源', exact: true }).click();
-  await dialog.getByLabel('默认真实品级').fill('1200');
+  await dialog.getByLabel('来源真实品级').fill('1200');
   await dialog.getByRole('button', { name: '保存来源', exact: true }).click();
-  await expect(dialog.getByText('pt · 1200 品')).toBeVisible();
+  await expect(dialog.getByRole('alert')).toContainText('品级已锁定');
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
   page.once('dialog', prompt => prompt.accept());
   await dialog.getByRole('button', { name: '删除来源', exact: true }).click();
-  await expect(dialog.getByText('pt · 1200 品')).toHaveCount(0);
+  await expect(dialog.getByRole('alert')).toContainText('已有装备引用');
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(cell).toHaveAccessibleDescription(/1110 品/);
   await page.reload();
@@ -134,7 +136,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   await expect(page.getByLabel('装备周期', { exact: true }).locator('option:checked')).toHaveText('下一测试周期');
   await expect(cell).toHaveAccessibleDescription(/1110 品/);
   await cell.click();
-  await expect(dialog.getByLabel('装备原始周期').locator('option:checked')).toHaveText('浏览器测试周期');
+  await expect(dialog.getByLabel('来源预设').locator('option:checked')).toContainText('浏览器测试周期');
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '测试角色2 帽子', exact: true }).click();
   await dialog.getByText('复制已有装备', { exact: true }).click();
@@ -162,11 +164,7 @@ test('空白工作空间、录入、比较、来源快照与 1/3/6 角色及窄�
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
   await dialog.screenshot({ path: '../.tools/screenshots/compact-equipment-mobile.png' });
   await expect(page.getByRole('dialog').getByRole('button', { name: /^保存(装备|记录)$/ })).toBeVisible();
-  await dialog.getByLabel('来源预设', { exact: true }).selectOption('manual');
-  await expect(dialog.getByLabel('装备来源名称')).toBeVisible();
-  await dialog.getByLabel('装备来源名称').fill('手动测试来源');
-  await dialog.getByLabel('装备来源简称').fill('手');
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1110');
+  await selectSource(dialog.getByLabel('来源预设', { exact: true }), '测试普通来源');
   await expect(dialog.getByRole('group', { name: '是否有体质孔' })).toHaveCount(0);
   await expect(dialog.getByText('戒指无体质孔', { exact: true })).toBeVisible();
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();

@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('清空仓库确认、清空前备份与独立掉落保留', async ({ page, request }) => {
@@ -5,8 +6,9 @@ test('清空仓库确认、清空前备份与独立掉落保留', async ({ page,
   const account = await (await request.post('/api/accounts', { data: { name: '清仓示意账号' } })).json();
   const base = `/api/accounts/${account.id}`;
   for (const [target, type, grade, quantity] of [['warehouse', 'hat', 1000, 2], ['warehouse', 'ring', 1100, 3], ['drops', 'hat', 1200, 1]] as const) {
+    const sourceId = await fixtureSource(request, cycle.id, grade);
     const response = await request.post(base + '/' + target, { data: { request_id: crypto.randomUUID(), quantity,
-      equipment: { cycle_origin_id: cycle.id, equipment_type: type, actual_grade: grade, has_constitution_socket: false, green_stats_ok: true } } });
+      equipment: { source_id: sourceId, equipment_type: type, has_constitution_socket: false, green_stats_ok: true } } });
     expect(response.ok()).toBeTruthy();
   }
   await page.goto('/');

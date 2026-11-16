@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('多账号连续创建角色、切换草稿、移除与恢复保持归属及装备', async ({ page, request }) => {
@@ -20,7 +21,8 @@ test('多账号连续创建角色、切换草稿、移除与恢复保持归属�
   const second = (await (await request.get('/api/workspace')).json()).accounts.find((a: { name: string }) => a.name === `乙账号${suffix}`);
   const character = (await (await request.get(`/api/accounts/${second.id}/characters`)).json())[0];
   const cycle = await (await request.post('/api/cycles', { data: { name: `角色恢复测试${suffix}` } })).json();
-  const worn = await request.put(`/api/accounts/${second.id}/characters/${character.id}/equipment/hat`, { data: { expected_version: 0, equipment: { cycle_origin_id: cycle.id, equipment_type: 'hat', source_type: '特殊', source_name: '测试来源', short_label: '测', actual_grade: 1234, has_constitution_socket: true, green_stats_ok: true } } });
+  const sourceId = await fixtureSource(request, cycle.id, 1234);
+  const worn = await request.put(`/api/accounts/${second.id}/characters/${character.id}/equipment/hat`, { data: { expected_version: 0, equipment: { source_id: sourceId, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true } } });
   expect(worn.ok()).toBeTruthy();
   await row.getByRole('button', { name: '编辑', exact: true }).click();
   await dialog.getByLabel('管理名称').fill('未保存名称');

@@ -1,4 +1,3 @@
-from .conftest import legacy_document, legacy_database_columns
 import copy
 import json
 import sqlite3
@@ -50,7 +49,7 @@ def seed_worn(client, setup):
 def test_empty_and_seeded_export_round_trip_preserves_null_and_zero(client,setup,tmp_path):
     seed_worn(client,setup)
     payload=export(client)
-    assert payload['schema_revision']=='0011'
+    assert payload['schema_revision']=='0012'
     assert 'cycle_change_previews' not in payload['tables'] and 'mutation_receipts' in payload['tables']
     assert payload['tables']['equipment_templates'][0]['base_constitution_override']==0
     assert payload['tables']['character_slot_settings'][0]['refine_level'] is None
@@ -96,31 +95,6 @@ def test_raid_checks_are_independent_and_round_trip(client, setup, tmp_path):
         restored = destination.get(f'/api/accounts/{account_id}/characters').json()[0]
         assert {k: v for k, v in restored.items() if k not in ('version', 'raid_version')} == {k: v for k, v in character.items() if k not in ('version', 'raid_version')}
         assert restored['raid_version'] > character['raid_version']
-
-
-def test_previous_backup_formats_default_raid_checks_to_unchecked(client, setup, tmp_path):
-    payload = export(client)
-    payload = legacy_document(payload, '0006')
-    for cycle in payload['tables']['equipment_cycles']:
-        cycle.pop('has_constitution_sockets')
-    raid_fields = ('raid_10', 'raid_25pt', 'raid_25yx')
-    for character in payload['tables']['characters']:
-        for field in raid_fields:
-            character.pop(field)
-    assert not review(client, payload)['unchanged']  # Legacy history is intentionally marked incomplete.
-    backup = client.post('/api/data/backups').json()['name']
-    path = tmp_path / 'old.sqlite3'
-    path.write_bytes(client.get(f'/api/data/backups/{backup}').content)
-    with sqlite3.connect(path) as connection:
-        legacy_database_columns(connection)
-        connection.execute('ALTER TABLE equipment_cycles DROP COLUMN has_constitution_sockets')
-        for field in raid_fields:
-            connection.execute(f'ALTER TABLE characters DROP COLUMN {field}')
-        connection.execute("UPDATE alembic_version SET version_num = '0006'")
-    connection.close()
-    response = client.post('/api/data/restore-preview', content=path.read_bytes())
-    assert response.status_code == 200, response.text
-    assert not response.json()['unchanged']
 
 
 def test_stale_preview_and_expired_preview_do_not_overwrite(client,setup):

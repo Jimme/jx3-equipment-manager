@@ -44,7 +44,7 @@ def test_add_merges_and_duplicate_request_does_not_add_twice(client, setup):
     assert daily(client, setup)['warehouse'][0]['quantity'] == 2
     body['quantity'] = 3
     assert client.post(path(setup) + '/warehouse', json=body).status_code == 409
-    clone, _ = add(client, setup, source_id=None, source_type='测试', source_name='测试来源', short_label='t')
+    clone, _ = add(client, setup)
     assert clone['id'] == item['id']
     assert clone['quantity'] == 3
     assert daily(client, setup)['drops'] == []

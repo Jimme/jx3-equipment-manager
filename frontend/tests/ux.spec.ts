@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('精简流程：格子选库存、纠错保留附魔、显式换装、单件转入与行内数量重试', async ({ page, request }) => {
@@ -8,10 +9,11 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   const prefix = `/api/accounts/${account.id}`;
   const a = await (await request.post(`${prefix}/characters`, { data: { name: '交互甲' } })).json();
   const b = await (await request.post(`${prefix}/characters`, { data: { name: '交互乙' } })).json();
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '交互测试来源', short_label: 'U', default_grade: 1110 } })).json();
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '交互测试来源', short_label: 'U', actual_grade: 1110 } })).json();
   await request.put(`${prefix}/preferences`, { data: { target_grade: 1110, comparison_mode: 'combined' } });
-  const equipment = { cycle_origin_id: cycle.id, source_id: source.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true };
-  const bad = { ...equipment, actual_grade: 965, has_constitution_socket: false, green_stats_ok: false };
+  const lowId = await fixtureSource(request, cycle.id, 965, '交互低档', 'U');
+  const equipment = { source_id: source.id, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true };
+  const bad = { ...equipment, source_id: lowId, has_constitution_socket: false, green_stats_ok: false };
   await request.put(`${prefix}/characters/${a.id}/equipment/hat`, { data: { expected_version: 0, equipment, choices: { enchant: { state: 'configured', name: '原有附魔' } } } });
   for (const [item, quantity] of [[equipment, 1], [bad, 2]] as const) await request.post(`${prefix}/warehouse`, { data: { request_id: crypto.randomUUID(), equipment: item, quantity } });
   const state = async () => (await request.get(`${prefix}/daily`)).json();
@@ -120,7 +122,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   await dialog.getByLabel('来源预设').selectOption(source.id);
   await dialog.getByLabel('库存装备部位').selectOption('weapon');
   await expect(dialog.getByLabel('来源预设')).toHaveValue(source.id);
-  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveValue('1110');
+  await expect(dialog.getByLabel('真实品级', { exact: true })).toHaveText('1110');
   await expect(dialog.getByRole('group', { name: '是否有体质孔' }).locator('input:checked')).toHaveCount(0);
   await expect(dialog.getByLabel('录入数量')).toBeVisible();
   expect(sourceReads).toHaveLength(0);

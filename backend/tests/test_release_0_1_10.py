@@ -1,14 +1,9 @@
-from .conftest import legacy_document, legacy_database_columns
-import json
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import event
 
-from backend.main import create_app
 from backend.drop_merge import merge_drop_rows
 from .conftest import equipment_payload, equipment_url
 from .test_inventory import add, daily, path
@@ -183,58 +178,6 @@ def test_history_query_count_is_bounded_and_templates_have_held_filter(client, s
     assert len(client.get('/api/templates?equipment_type=hat').json()) == 17
     assert len(client.get('/api/templates?equipment_type=hat&include_history=false').json()) == 1
     assert client.get(f"/api/cycles/{setup['cycle']['id']}/socket-impact").json()['worn'] == 1
-
-
-def test_old_drop_migration_and_json_import_preserve_quantities_and_audit(client, setup, tmp_path):
-    item, _ = add(client, setup, 'drops', quantity=2)
-    document = client.get('/api/data/export').json()
-    document = legacy_document(document, '0008')
-    duplicate = {**document['tables']['raid_drop_notes'][0], 'id': str(uuid4()), 'quantity': 3}
-    document['tables']['raid_drop_notes'].append(duplicate)
-    response = client.post('/api/data/import-preview', content=json.dumps(document).encode())
-    assert response.status_code == 200, response.text
-    assert client.post('/api/data/changes/' + response.json()['preview_id'] + '/apply', json={'confirm_replace': True}).status_code == 200
-    assert daily(client, setup)['drops'][0]['quantity'] == 5
-    assert client.get(path(setup) + '/history').json()[0]['title'] == '归并相同掉落'
-    source = tmp_path / 'migration'
-    source.mkdir()
-    backup = client.post('/api/data/backups').json()['name']
-    database = source / 'app.sqlite3'
-    database.write_bytes(client.get('/api/data/backups/' + backup).content)
-    migration_before = client.get('/api/data/export').json()
-    migration_before = legacy_document(migration_before, '0008')
-    with sqlite3.connect(database) as connection:
-        legacy_database_columns(connection)
-        connection.executescript('ALTER TABLE raid_drop_notes RENAME TO old_drops; CREATE TABLE raid_drop_notes AS SELECT * FROM old_drops; DROP TABLE old_drops;')
-        current = connection.execute('SELECT * FROM raid_drop_notes').fetchone()
-        columns = [row[1] for row in connection.execute('PRAGMA table_info(raid_drop_notes)')]
-        another = dict(zip(columns, current)); another.update(id=str(uuid4()), quantity=7)
-        migration_before['tables']['raid_drop_notes'].append(another)
-        connection.execute('INSERT INTO raid_drop_notes VALUES (' + ','.join('?' for _ in columns) + ')', [another[key] for key in columns])
-        connection.execute("UPDATE alembic_version SET version_num='0008'")
-    with TestClient(create_app(source)) as migrated:
-        rows = daily(migrated, setup)['drops']
-        assert len(rows) == 1 and rows[0]['quantity'] == 12
-        with sqlite3.connect(database) as connection:
-            assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
-            assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
-        assert migrated.get('/api/data/export').json()['schema_revision'] == '0011'
-        from scripts.verify_update import verify_tables
-        assert verify_tables(migration_before, migrated.get('/api/data/export').json()) == 1
-
-
-def test_deployment_verifier_checks_expected_defaults_and_detects_real_changes(client, setup):
-    from scripts.verify_update import expected_tables, verify_tables
-    before = client.get('/api/data/export').json()
-    before = legacy_document(before, '0007')
-    for cycle in before['tables']['equipment_cycles']:
-        cycle.pop('has_constitution_sockets')
-    expected, _ = expected_tables(before)
-    after = {'schema_revision': '0011', 'tables': expected}
-    assert verify_tables(before, after) == 0
-    after['tables']['equipment_cycles'][0]['has_constitution_sockets'] = False
-    with pytest.raises(AssertionError, match='Business data differs'):
-        verify_tables(before, after)
 
 
 def test_drop_merge_overflow_is_explicit():

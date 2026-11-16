@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async ({ page, request }) => {
@@ -6,7 +7,8 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   const cycle = await (await request.post('/api/cycles', { data: { name: '批量验收周期' } })).json();
   const account = await (await request.post('/api/accounts', { data: { name: '批量验收账号' } })).json();
   const character = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '批量角色' } })).json();
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { name: '批量来源', source_type: '测试', short_label: '批', default_grade: 1110 } })).json();
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { name: '批量来源', source_type: '测试', short_label: '批', actual_grade: 1110 } })).json();
+  const highId = await fixtureSource(request, cycle.id, 1200, '批量高档');
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
   await page.getByRole('button', { name: '批量角色 批量录入装备', exact: true }).click();
@@ -14,7 +16,7 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   await expect(dialog.locator('.batch-table tbody tr')).toHaveCount(12);
   await dialog.getByLabel('帽子批量操作', { exact: true }).selectOption('new');
   await dialog.getByLabel('帽子批量来源', { exact: true }).selectOption(source.id);
-  await expect(dialog.getByLabel('帽子批量品级', { exact: true })).toHaveValue('1110');
+  await expect(dialog.getByLabel('帽子批量品级', { exact: true })).toHaveText('1110');
   await dialog.getByRole('checkbox', { name: '帽子体质孔', exact: true }).check();
   await dialog.getByRole('checkbox', { name: '帽子绿字', exact: true }).check();
   await dialog.getByLabel('勾选帽子', { exact: true }).check();
@@ -22,7 +24,7 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   await dialog.getByText('对勾选行统一设置 · 2 行', { exact: true }).click();
   await dialog.getByLabel('复制行字段', { exact: true }).selectOption('hat');
   await dialog.getByRole('button', { name: '复制到勾选行', exact: true }).click();
-  await expect(dialog.getByLabel('上衣批量品级', { exact: true })).toHaveValue('1110');
+  await expect(dialog.getByLabel('上衣批量品级', { exact: true })).toHaveText('1110');
   page.once('dialog', prompt => prompt.dismiss());
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(dialog).toBeVisible();
@@ -33,7 +35,7 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   const prefix = `/api/accounts/${account.id}`;
   const matrix = await (await request.get(prefix + '/matrix')).json();
   expect(matrix.cells[character.id].chest.equipment.actual_grade).toBe(1110);
-  const equipment = { cycle_origin_id: cycle.id, source_id: source.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true };
+  const equipment = { source_id: source.id, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true };
   await request.post(prefix + '/warehouse', { data: { request_id: crypto.randomUUID(), equipment, quantity: 3 } });
   await request.post(prefix + '/warehouse', { data: { request_id: crypto.randomUUID(), equipment, quantity: 1, choices: { enchant: { state: 'none' } } } });
   await request.post(prefix + '/drops', { data: { request_id: crypto.randomUUID(), equipment, quantity: 1 } });
@@ -44,7 +46,7 @@ test('角色整批录入、草稿保护、纠错拆分和全配置矩阵', async
   await page.getByRole('button', { name: /^编辑帽子共享仓库配置/ }).filter({ hasText: '×3' }).click();
   await expect(dialog.getByLabel('本次更正件数')).toHaveValue('3');
   await dialog.getByLabel('本次更正件数').fill('1');
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1200');
+  await dialog.getByLabel('来源预设', { exact: true }).selectOption(highId);
   await dialog.getByRole('button', { name: '保存更正', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const daily = await (await request.get(prefix + '/daily')).json();

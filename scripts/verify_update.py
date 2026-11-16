@@ -3,7 +3,6 @@
 Run with the project virtualenv. State contains private exports: keep it in .tools.
 """
 import argparse
-import copy
 import json
 import sqlite3
 import sys
@@ -12,62 +11,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import Boolean
-from backend.data_management import TABLE_MAP, fingerprint
-from backend.domain import EQUIPMENT_TYPES
-from backend.drop_merge import merge_drop_rows
-
-
-def expected_tables(document):
-    revision = document['schema_revision']
-    if revision not in ('0006', '0007', '0008', '0009', '0010', '0011'):
-        raise ValueError('Unsupported source revision: ' + revision)
-    tables = copy.deepcopy(document['tables'])
-    if revision in ('0006', '0007', '0008', '0009'):
-        for row in tables['game_accounts']:
-            row['version'] = 0
-        for row in tables['characters']:
-            row.update(version=0, raid_version=0, history_complete=False)
-        tables['creation_receipts'] = []
-        tables['raid_cd_settings'] = [{'id': 1, 'enabled': False, 'version': 0, 'cursor_10': None, 'cursor_25': None, 'changed_at': None}]
-    if revision in ('0006', '0007'):
-        for row in tables['equipment_cycles']:
-            assert 'has_constitution_sockets' not in row
-            row['has_constitution_sockets'] = True
-    if revision == '0006':
-        for row in tables['characters']:
-            row.update(raid_10=False, raid_25pt=False, raid_25yx=False)
-    if revision != '0011':
-        for row in tables['equipment_cycles']:
-            assert 'socket_exempt_types' not in row
-            row['socket_exempt_types'] = '' if row['has_constitution_sockets'] else ','.join(EQUIPMENT_TYPES[:-1])
-    if revision in ('0009', '0010', '0011'):
-        return tables, []
-    merged, changes = merge_drop_rows(tables['raid_drop_notes'])
-    tables['raid_drop_notes'] = merged
-    for _, after in changes:
-        state = next((row for row in tables['raid_memo_states'] if row['account_id'] == after['account_id']), None)
-        if state:
-            state['version'] += 1
-        else:
-            tables['raid_memo_states'].append({'account_id': after['account_id'], 'version': 1})
-    return tables, changes
+from backend.data_management import REVISION, TABLE_MAP, fingerprint
 
 
 def verify_tables(before, after):
-    assert after['schema_revision'] == '0011'
-    expected, changes = expected_tables(before)
-    actual = copy.deepcopy(after['tables'])
-    old_ids = {row['id'] for row in expected['audit_events']}
-    added = [row for row in actual['audit_events'] if row['id'] not in old_ids]
-    assert len(added) == len(changes), 'Unexpected audit events; someone may have edited data during update'
-    for prior, merged in changes:
-        matches = [row for row in added if row['operation'] == 'drop_merge_migration' and row['entity_id'] == merged['id']]
-        assert len(matches) == 1
-        detail = json.loads(matches[0]['snapshots'])
-        assert detail['before'] == prior and detail['after'] == merged
-    actual['audit_events'] = [row for row in actual['audit_events'] if row['id'] in old_ids]
-    assert fingerprint(expected) == fingerprint(actual), 'Business data differs from expected migration'
-    return len(changes)
+    assert before['schema_revision'] == after['schema_revision'] == REVISION
+    assert fingerprint(before['tables']) == fingerprint(after['tables']), 'Business data differs'
+    return 0
 
 
 def check_snapshot(path, document):
@@ -89,7 +39,7 @@ def main():
     parser.add_argument('phase', choices=['before', 'after'])
     parser.add_argument('--url', required=True, help='Application URL without /api')
     parser.add_argument('--state', type=Path, default=Path('.tools/update-verification.json'))
-    parser.add_argument('--version', default='0.1.13')
+    parser.add_argument('--version', default='0.1.14')
     args = parser.parse_args()
     if '.tools' not in args.state.resolve().parts:
         parser.error('Private update state must be stored under .tools')

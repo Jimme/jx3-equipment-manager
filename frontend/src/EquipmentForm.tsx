@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { api, optionalInteger } from './api';
+import { api } from './api';
+import { availableSources, equipmentInput, sourceLabel } from './batchFields';
 import { ChoicesFields, draftChoices, serializeChoices } from './ChoicesFields';
-import type { Data, EquipmentChoices, EquipmentInput, Run, Source, Template } from './types';
+import type { Data, EquipmentChoices, EquipmentInput, Run, Template } from './types';
 
 export function BinaryChoice({ title, value, yes, no, hint, onChange }: { title: string; value: string; yes: string; no: string; hint?: string; onChange: (value: string) => void }) {
   const name = useId();
@@ -29,12 +30,10 @@ type Props = {
 
 export function EquipmentForm({ data, type, current = null, initialChoices = null, initialGrade, pending, run, close, savedClose, onSave, lastEquipment, description, leadingFields, actions, allowCopy = true, onDirty, onSpecificDirty, extraDirty = false, submitLabel = '保存装备', success = '装备已保存' }: Props) {
   const fieldsFor = (t: Template | null) => ({
-    cycle_origin_id: t?.cycle_origin_id ?? data.cycleId, source_id: '', source_type: t?.source_type ?? '特殊', source_name: t?.source_name ?? '手动录入', short_label: t?.short_label ?? '自',
-    actual_grade: t?.actual_grade.toString() ?? initialGrade?.toString() ?? '', has_constitution_socket: t ? String(t.has_constitution_socket) : '', green_stats_ok: t ? String(t.green_stats_ok) : '',
+    source_id: t?.source_id ?? '', has_constitution_socket: t ? String(t.has_constitution_socket) : '', green_stats_ok: t ? String(t.green_stats_ok) : '',
     base_constitution_override: t?.base_constitution_override?.toString() ?? '', name: t?.name ?? '', note: t?.note ?? '',
   });
   const [fields, setFields] = useState(() => fieldsFor(current));
-  const gradeManual = useRef(!!current || initialGrade !== undefined);
   const [choices, setChoices] = useState(() => draftChoices(initialChoices));
   const initial = useRef(JSON.stringify([fields, choices]));
   const dirty = extraDirty || JSON.stringify([fields, choices]) !== initial.current;
@@ -50,30 +49,20 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
       previousType.current = type;
     }
   }, [type]);
-  const [sourceChoice, setSourceChoice] = useState(current ? 'saved' : '');
-  const [historicalSources, setHistoricalSources] = useState<Source[]>([]);
-  const [sourceError, setSourceError] = useState('');
+  const sources = availableSources(data, current?.source_id).filter(source => initialGrade === undefined || source.actual_grade === initialGrade);
+  const selectedSource = sources.find(source => source.id === fields.source_id);
+  const cycleId = selectedSource?.cycle_id ?? '';
+  const actualGrade = selectedSource?.actual_grade;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [baseDefault, setBaseDefault] = useState<{ value: number | null; status: string } | null>(null);
   useEffect(() => {
     let active = true;
     setBaseDefault(null);
-    const grade = Number(fields.actual_grade);
-    if (!detailsOpen || !fields.cycle_origin_id || !Number.isInteger(grade) || grade <= 0) return;
-    const timer=window.setTimeout(() => { api<{value:number|null;status:string}>(`/cycles/${fields.cycle_origin_id}/base-stat?actual_grade=${grade}&equipment_type=${type}`).then(value=>{if(active)setBaseDefault(value);}).catch(()=>{if(active)setBaseDefault({value:null,status:'unavailable'});}); },150);
+    const grade = actualGrade;
+    if (!detailsOpen || !cycleId || grade === undefined) return;
+    const timer=window.setTimeout(() => { api<{value:number|null;status:string}>(`/cycles/${cycleId}/base-stat?actual_grade=${grade}&equipment_type=${type}`).then(value=>{if(active)setBaseDefault(value);}).catch(()=>{if(active)setBaseDefault({value:null,status:'unavailable'});}); },150);
     return () => {active=false;window.clearTimeout(timer);};
-  },[detailsOpen,fields.cycle_origin_id,fields.actual_grade,type]);
-  useEffect(() => {
-    let active = true;
-    setHistoricalSources([]); setSourceError('');
-    if (fields.cycle_origin_id && fields.cycle_origin_id !== data.cycleId) {
-      api<Source[]>(`/cycles/${fields.cycle_origin_id}/sources`)
-        .then(s => { if (active) setHistoricalSources(s); })
-        .catch(e => { if (active) setSourceError(e.message); });
-    }
-    return () => { active = false; };
-  }, [fields.cycle_origin_id, data.cycleId]);
-  const sources = fields.cycle_origin_id === data.cycleId ? data.sources : historicalSources;
+  },[detailsOpen,cycleId,actualGrade,type]);
   const socketApplicable = type !== 'ring';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -85,22 +74,20 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
     setTemplates([]);
     if (copyOpen && allowCopy) {
       setCopyError('');
-      api<Template[]>(`/templates?equipment_type=${type}&include_history=${includeHistory}`).then(items => { if (active) setTemplates(items); })
+      api<Template[]>(`/templates?equipment_type=${type}&include_history=${includeHistory}`).then(items => { if (active) setTemplates(items.filter(item => sources.some(source => source.id === item.source_id))); })
         .catch(error => { if (active) setCopyError(error.message); });
     }
     return () => { active = false; };
-  }, [copyOpen, allowCopy, type, copyRead, includeHistory]);
+  }, [copyOpen, allowCopy, type, copyRead, includeHistory, data.sources, initialGrade, current?.source_id]);
   const changed = !current || JSON.stringify(fields) !== JSON.stringify(fieldsFor(current)) || JSON.stringify(choices) !== JSON.stringify(draftChoices(initialChoices));
-  const canCopyLast = allowCopy && lastEquipment?.equipment_type === type;
+  const canCopyLast = allowCopy && lastEquipment?.equipment_type === type && sources.some(source => source.id === lastEquipment.source_id);
   function copyEquipment(equipment: Template) {
     if (dirty && !window.confirm('复制会替换本次未保存的录入，确定继续？')) return;
     setFields(fieldsFor(equipment));
-    gradeManual.current = true;
-    setSourceChoice('saved');
     setChoices(draftChoices());
   }
   return <form onSubmit={e => { e.preventDefault(); void run(async () => {
-    const equipment = { ...fields, source_id: fields.source_id || null, equipment_type: type, actual_grade: optionalInteger(fields.actual_grade), has_constitution_socket: socketApplicable && fields.has_constitution_socket === 'true', green_stats_ok: fields.green_stats_ok === 'true', base_constitution_override: optionalInteger(fields.base_constitution_override) };
+    const equipment = equipmentInput(fields, type, actualGrade);
     await onSave(equipment, serializeChoices(choices));
   }, success, savedClose ?? close); }}>
     <fieldset disabled={pending}>
@@ -118,34 +105,25 @@ export function EquipmentForm({ data, type, current = null, initialChoices = nul
         </details>
       </div>}
       <div className="form-grid">
-        <label>装备来源<select aria-label="来源预设" required value={fields.source_id || sourceChoice} onChange={e => {
-          const s = sources.find(s => s.id === e.target.value);
-          setSourceChoice(s ? '' : e.target.value);
-          setFields(s ? { ...fields, source_id: s.id, source_type: s.source_type, source_name: s.name, short_label: s.short_label, actual_grade: fields.actual_grade && gradeManual.current ? fields.actual_grade : s.default_grade?.toString() ?? '' } : { ...fields, source_id: '' });
-        }}><option value="">请选择来源</option>{(current || sourceChoice === 'saved') && <option value="saved">{fields.source_name}（保留已录信息）</option>}{sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}<option value="manual">其他来源，手动填写</option></select></label>
-        <label>真实品级<input aria-label="真实品级" required type="number" min="1" max="2147483647" step="1" value={fields.actual_grade} onChange={e => { gradeManual.current = true; setFields({ ...fields, actual_grade: e.target.value }); }}/>
-          {fields.source_id && <button type="button" className="quiet-button" onClick={() => { const source = sources.find(row => row.id === fields.source_id); if (source?.default_grade != null) { gradeManual.current = false; setFields({ ...fields, actual_grade: String(source.default_grade) }); } }}>使用来源默认</button>}
-        </label>
-        {!fields.source_id && sourceChoice === 'manual' && <>
-          <label>来源名称<input aria-label="装备来源名称" placeholder="装备从哪里获得" required maxLength={100} value={fields.source_name} onChange={e => setFields({ ...fields, source_name: e.target.value })}/></label>
-          <label>表格简称<input aria-label="装备来源简称" required maxLength={12} value={fields.short_label} onChange={e => setFields({ ...fields, short_label: e.target.value })}/></label>
-        </>}
+        <label>装备来源<select aria-label="来源预设" required value={fields.source_id} onChange={e => setFields({ ...fields, source_id: e.target.value })}>
+          <option value="">请选择来源</option>{sources.map(source => <option key={source.id} value={source.id}>{sourceLabel(data, source)}</option>)}
+        </select></label>
+        <p className="fixed-field"><span>真实品级</span><strong aria-label="真实品级">{actualGrade ?? '待选来源'}</strong></p>
+        {!sources.length && <p className="hint">请先在「周期与来源」添加适用的来源。</p>}
         {socketApplicable ? <BinaryChoice title="是否有体质孔" value={fields.has_constitution_socket} yes="有" no="无" onChange={value => setFields({ ...fields, has_constitution_socket: value })}/> : <p className="fixed-field"><span>体质孔</span><strong>戒指无体质孔</strong></p>}
         <BinaryChoice title="绿字是否达标" value={fields.green_stats_ok} yes="达标" no="未达标" hint="内防＋外防＋加速" onChange={value => setFields({ ...fields, green_stats_ok: value })}/>
       </div>
-      {sourceError && <p role="alert" className="message error">来源加载失败：{sourceError}</p>}
       <details className="optional-fields menu-disclosure" onToggle={e => setDetailsOpen(e.currentTarget.open)}><summary>更多信息</summary>
-        <h3>{type === 'weapon' ? '附魔与五彩石' : '附魔'}</h3><ChoicesFields value={choices} onChange={setChoices} weapon={type === 'weapon'} cycleId={fields.cycle_origin_id} equipmentType={type}/>
+        <h3>{type === 'weapon' ? '附魔与五彩石' : '附魔'}</h3><ChoicesFields value={choices} onChange={setChoices} weapon={type === 'weapon'} cycleId={cycleId} equipmentType={type}/>
         <div className="form-grid">
           <label>装备名称（可空）<input aria-label="装备名称" maxLength={100} value={fields.name} onChange={e => setFields({ ...fields, name: e.target.value })}/></label>
           <label>基础体质覆盖（可空）<input aria-label="基础体质覆盖" type="number" min="0" max="2147483647" value={fields.base_constitution_override} onChange={e => setFields({ ...fields, base_constitution_override: e.target.value })}/><small className="base-default">周期默认：{baseDefault?.status === 'known' ? baseDefault.value : baseDefault?.status === 'unavailable' ? '读取失败，请稍后重试' : '未录入'}；留空使用默认值，填写则覆盖。</small></label>
-          {data.workspace.cycles.length > 1 ? <label>装备所属周期<select aria-label="装备原始周期" required value={fields.cycle_origin_id} onChange={e => { setFields({ ...fields, cycle_origin_id: e.target.value, source_id: '' }); setSourceChoice(current || sourceChoice === 'saved' ? 'saved' : 'manual'); }}><option value="">请选择周期</option>{data.workspace.cycles.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label> : <p className="fixed-field"><span>所属周期</span><strong>{data.workspace.cycles[0]?.name ?? '尚未创建'}</strong></p>}
+          <p className="fixed-field"><span>所属周期</span><strong>{data.workspace.cycles.find(cycle => cycle.id === cycleId)?.name ?? '待选来源'}</strong></p>
         </div>
         <label className="note-field">备注<textarea aria-label="备注" maxLength={2000} rows={2} value={fields.note} onChange={e => setFields({ ...fields, note: e.target.value })}/></label>
-        <p className="hint">体质留空表示未知。附魔和五彩石属于本次记录，修改品级时会保留。</p>
+        <p className="hint">体质留空表示未知。附魔和五彩石属于本次记录，切换来源时会保留。</p>
       </details>
-      <div className="dialog-actions">{actions}<button type="button" onClick={close}>取消</button><button className="primary" disabled={!fields.cycle_origin_id || !changed}>{pending ? '正在保存…' : submitLabel}</button></div>
-      {!fields.cycle_origin_id && <p className="hint">请先在「周期与来源」中创建周期。</p>}
+      <div className="dialog-actions">{actions}<button type="button" onClick={close}>取消</button><button className="primary" disabled={!selectedSource || !changed}>{pending ? '正在保存…' : submitLabel}</button></div>
     </fieldset>
   </form>;
 }

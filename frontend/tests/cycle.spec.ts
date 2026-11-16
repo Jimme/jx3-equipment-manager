@@ -1,3 +1,4 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -6,6 +7,7 @@ test('按部位免孔比较，录入保留实际孔状态与戒指例外', async
   const account = await (await request.post('/api/accounts', { data: { name: '体质孔规则账号' } })).json();
   const character = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '体质孔规则角色' } })).json();
   await request.patch(`/api/accounts/${account.id}/preferences`, { data: { target_grade: 1110, comparison_mode: 'combined' } });
+  const noSocketId = await fixtureSource(request, cycle.id, 1110, '无孔测试', '无');
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);
   await page.getByRole('button', { name: '周期与来源', exact: true }).click();
@@ -24,10 +26,7 @@ test('按部位免孔比较，录入保留实际孔状态与戒指例外', async
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '体质孔规则角色 帽子', exact: true }).click();
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '无', exact: true }).check();
-  await dialog.getByLabel('来源预设').selectOption('manual');
-  await dialog.getByLabel('装备来源名称').fill('无孔测试');
-  await dialog.getByLabel('装备来源简称').fill('无');
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1110');
+  await dialog.getByLabel('来源预设').selectOption(noSocketId);
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByRole('button', { name: '保存装备', exact: true }).click();
   const cell = page.getByRole('button', { name: '体质孔规则角色 帽子', exact: true });
@@ -52,10 +51,11 @@ test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', a
   const cycle = await (await request.post('/api/cycles', { data: { name: '数值验收旧周期' } })).json();
   const account = await (await request.post('/api/accounts', { data: { name: '周期验收账号' } })).json();
   const character = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '周期验收角色' } })).json();
-  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '周期验收来源', short_label: '周', default_grade: 1110 } })).json();
-  await request.put(`/api/accounts/${account.id}/characters/${character.id}/equipment/hat`, { data: { expected_version: 0, equipment: { cycle_origin_id: cycle.id, source_id: source.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true } } });
+  const source = await (await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '周期验收来源', short_label: '周', actual_grade: 1110 } })).json();
+  await request.put(`/api/accounts/${account.id}/characters/${character.id}/equipment/hat`, { data: { expected_version: 0, equipment: { source_id: source.id, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true } } });
   const state = async (id=cycle.id) => (await request.get(`/api/cycles/${id}/data`)).json();
   const matrix = async () => (await request.get(`/api/accounts/${account.id}/matrix`)).json();
+  const noSocketId = await fixtureSource(request, cycle.id, 1110, '无孔测试', '无');
   await page.goto('/');
   await page.getByLabel('游戏账号', {exact:true}).selectOption(account.id);
   await page.getByRole('button',{name:'周期与来源',exact:true}).click();
@@ -126,7 +126,7 @@ test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', a
   await expect(dialog.getByRole('region',{name:'变更预览'})).toBeVisible();
   await expect(dialog.getByRole('button',{name:'确认保存并备份',exact:true})).toBeEnabled();
   const latest=await state();
-  const externalEdit=await request.put(`/api/cycles/${cycle.id}/sources/${source.id}`,{data:{source_type:'测试',name:source.name,short_label:source.short_label,default_grade:1200,expected_version:latest.cycle.version}});
+  const externalEdit=await request.put(`/api/cycles/${cycle.id}/sources/${source.id}`,{data:{source_type:'测试',name:source.name,short_label:source.short_label,actual_grade:1110,expected_version:latest.cycle.version}});
   expect(externalEdit.ok(),await externalEdit.text()).toBe(true);
   await dialog.getByRole('button',{name:'确认保存并备份',exact:true}).click();
   await expect(dialog.getByRole('alert')).toContainText('周期配置已变化');
@@ -147,6 +147,7 @@ test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', a
   await expect(dialog.getByRole('button',{name:'复制为新周期',exact:true})).toBeEnabled();
   await dialog.getByRole('button',{name:'复制为新周期',exact:true}).click();
   await dialog.getByLabel('周期名称').fill('数值验收新周期');
+  await dialog.getByRole('checkbox', { name: '周期验收来源 · 1110 品' }).check();
   await dialog.getByRole('button',{name:'预览复制',exact:true}).click();
   await expect(dialog.getByRole('region',{name:'变更预览'})).toContainText('基础体质 11 行');
   await dialog.getByRole('button',{name:'确认复制并切换',exact:true}).click();
@@ -154,7 +155,7 @@ test('周期数值、CSV 预览、复制历史及旧装备属性依据保持', a
   const workspace=await (await request.get('/api/workspace')).json();
   const copiedId=workspace.active_cycle_id;
   expect(copiedId).not.toBe(cycle.id);
-  expect((await state(copiedId)).sources[0].default_grade).toBe(1200);
+  expect((await state(copiedId)).sources[0].actual_grade).toBe(1110);
   expect((await matrix()).cells[character.id].hat.equipment.actual_grade).toBe(1110);
   await dialog.getByLabel('数值表',{exact:true}).selectOption('base');
   await dialog.getByLabel('1110品帽子基础体质').fill('200');

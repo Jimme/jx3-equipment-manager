@@ -76,19 +76,16 @@ class SourceInput(Input):
     source_type: Name
     name: Name
     short_label: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=12)]
-    default_grade: Grade | None = None
+    actual_grade: Grade
+    active: Annotated[bool, Field(strict=True)] = True
     expected_version: Nonnegative | None = None
     request_id: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
 
 
 class TemplateInput(Input):
-    cycle_origin_id: str
-    source_id: str | None = None
-    source_type: Name = "特殊"
-    source_name: Name = "手动录入"
-    short_label: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=12)] = "自"
+    source_id: Annotated[str, StringConstraints(min_length=1)]
+    expected_source_grade: Grade | None = None
     equipment_type: Literal["hat", "chest", "belt", "weapon", "ranged", "wrist", "legs", "feet", "necklace", "pendant", "ring"]
-    actual_grade: Grade | None = None
     has_constitution_socket: bool
     green_stats_ok: bool
     base_constitution_override: Nonnegative | None = None
@@ -338,6 +335,7 @@ class CycleCsvPreviewInput(Input):
 class CycleCopyInput(Input):
     expected_version: Nonnegative
     name: Name
+    source_ids: set[str] = Field(default_factory=set)
 
 
 class CycleArchiveInput(Input):

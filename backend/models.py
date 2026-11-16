@@ -1,5 +1,5 @@
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -80,31 +80,39 @@ class Source(Base):
     source_type: Mapped[str] = mapped_column(String)
     name: Mapped[str] = mapped_column(String)
     short_label: Mapped[str] = mapped_column(String)
-    default_grade: Mapped[int | None] = mapped_column(Integer)
-    __table_args__ = (CheckConstraint("default_grade IS NULL OR default_grade > 0"),)
+    actual_grade: Mapped[int] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(default=True)
+    __table_args__ = (CheckConstraint("actual_grade BETWEEN 1 AND 2147483647"),)
 
 
 class Template(Base):
     __tablename__ = "equipment_templates"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    cycle_origin_id: Mapped[str] = mapped_column(ForeignKey("equipment_cycles.id"), index=True)
-    source_id: Mapped[str | None] = mapped_column(ForeignKey("equipment_sources.id"))
-    source_type: Mapped[str] = mapped_column(String)
-    source_name: Mapped[str] = mapped_column(String)
-    short_label: Mapped[str] = mapped_column(String)
+    source_id: Mapped[str] = mapped_column(ForeignKey("equipment_sources.id"), index=True)
+    source: Mapped[Source] = relationship(lazy="joined")
     equipment_type: Mapped[str] = mapped_column(String)
-    actual_grade: Mapped[int] = mapped_column(Integer)
     has_constitution_socket: Mapped[bool] = mapped_column()
     green_stats_ok: Mapped[bool] = mapped_column()
     base_constitution_override: Mapped[int | None] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String, default="")
     note: Mapped[str] = mapped_column(Text, default="")
     __table_args__ = (
-        CheckConstraint("actual_grade > 0"),
         CheckConstraint("equipment_type IN ('hat','chest','belt','weapon','ranged','wrist','legs','feet','necklace','pendant','ring')"),
         CheckConstraint("has_constitution_socket IN (0,1) AND green_stats_ok IN (0,1)"),
         CheckConstraint("base_constitution_override IS NULL OR base_constitution_override >= 0"),
     )
+
+    @property
+    def cycle_origin_id(self):
+        return self.source.cycle_id
+
+    @property
+    def actual_grade(self):
+        return self.source.actual_grade
+
+    @property
+    def short_label(self):
+        return self.source.short_label
 
 
 class EquipmentConfig(Base):

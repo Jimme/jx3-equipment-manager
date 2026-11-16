@@ -1,3 +1,4 @@
+import { fixtureSource, selectSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号隔离', async ({ page, request }) => {
@@ -7,10 +8,11 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   const account = await (await request.post('/api/accounts', { data: { name: '日常流程测试账号' } })).json();
   const first = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '日常角色甲' } })).json();
   const second = await (await request.post(`/api/accounts/${account.id}/characters`, { data: { name: '日常角色乙' } })).json();
-  await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '流程测试来源', short_label: '测', default_grade: 1110 } });
+  await request.post(`/api/cycles/${cycle.id}/sources`, { data: { source_type: '测试', name: '流程测试来源', short_label: '测', actual_grade: 1110 } });
   await request.put(`/api/accounts/${account.id}/preferences`, { data: { target_grade: 1110, comparison_mode: 'combined' } });
   const state = async () => (await request.get(`/api/accounts/${account.id}/daily`)).json();
 
+  const highId = await fixtureSource(request, cycle.id, 1200, '流程高档');
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption({ label: account.name });
   await expect(page.getByRole('button', { name: '日常角色甲 帽子', exact: true })).toBeVisible();
@@ -19,7 +21,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: '添加共享库存 · 帽子' })).toBeVisible();
   await expect(dialog.getByLabel('库存装备部位')).toHaveCount(0);
-  await dialog.getByLabel('来源预设').selectOption({ label: '流程测试来源' });
+  await selectSource(dialog.getByLabel('来源预设'), '流程测试来源');
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByLabel('录入数量').fill('2');
@@ -55,7 +57,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await page.getByRole('button', { name: '团本掉落', exact: true }).click();
   await page.getByRole('button', { name: '武器：记录掉落', exact: true }).click();
   await expect(dialog.getByLabel('库存装备部位')).toHaveCount(0);
-  await dialog.getByLabel('来源预设').selectOption({ label: '流程测试来源' });
+  await selectSource(dialog.getByLabel('来源预设'), '流程测试来源');
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '有', exact: true }).check();
   await dialog.getByRole('group', { name: '绿字是否达标' }).getByRole('radio', { name: '达标', exact: true }).check();
   await dialog.getByLabel('录入数量').fill('3');
@@ -91,7 +93,7 @@ test('共享库存、候选穿戴、附魔归属、掉落转入清空及账号�
   await page.getByRole('button', { name: '日常角色甲 武器', exact: true }).click();
   await dialog.getByText('更多信息', { exact: true }).click();
   await expect(dialog.getByLabel('五彩石', { exact: true })).toHaveValue('configured');
-  await dialog.getByLabel('真实品级', { exact: true }).fill('1200');
+  await dialog.getByLabel('来源预设').selectOption(highId);
   await expect(dialog.getByLabel('五彩石', { exact: true })).toHaveValue('configured');
   await dialog.getByRole('button', { name: /^保存(装备|记录)$/ }).click();
   await expect(dialog).not.toBeVisible();

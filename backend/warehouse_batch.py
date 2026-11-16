@@ -14,12 +14,12 @@ from .equipment_batch import signature
 from .inventory import finish_operation, start_operation
 from .models import Cycle, DataChangePreview, EquipmentConfig, Template, WarehouseStack
 from .schemas import BatchEquipmentApply, WarehouseBatchInput
-from .services import active_account, choices_for, create_config, create_template, dump, new_id, require
+from .services import active_account, choices_for, create_config, create_template, dump, equipment_details, new_id, require
 
 
 def config_snapshot(session, config, template=None):
     template = template or require(session, Template, config.template_id)
-    equipment = dump(template)
+    equipment = equipment_details(dump(template), template.source)
     equipment.pop('id')
     return {'equipment': equipment, 'choices': choices_for(config)}
 
@@ -39,8 +39,10 @@ def prepare(session, account_id, payload):
         old = by_id.get(row.item_id)
         if row.item_id is not None and (old is None or old.version != row.expected_version or old.quantity < row.quantity):
             raise HTTPException(409, f'第 {index} 行库存或件数已变化，请读取最新库存')
+        old_config = require(session, EquipmentConfig, old.config_id) if old is not None else None
+        prior_template = require(session, Template, old_config.template_id) if old_config else None
         try:
-            template = create_template(session, row.equipment)
+            template = create_template(session, row.equipment, prior_template.source_id if prior_template else None)
             config = create_config(session, template, row.choices)
         except HTTPException as error:
             raise HTTPException(error.status_code, f'第 {index} 行：{error.detail}') from error
@@ -49,8 +51,7 @@ def prepare(session, account_id, payload):
         previous = None
         if old is not None:
             touched.add(old.config_id)
-            old_config = require(session, EquipmentConfig, old.config_id)
-            previous = config_snapshot(session, old_config)
+            previous = config_snapshot(session, old_config, prior_template)
             if previous['equipment']['equipment_type'] != template.equipment_type:
                 raise HTTPException(422, f'第 {index} 行不能更改已有库存的部位')
             if config.id == old.config_id:

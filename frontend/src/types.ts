@@ -2,9 +2,9 @@ export type Account = { id: string; name: string; sort_order: number; archived: 
 export type RaidDifficulty = '10' | '25pt' | '25yx';
 export type Character = { id: string; account_id: string; name: string; sort_order: number; archived: boolean; version: number; raid_version: number; history_complete: boolean } & Record<`raid_${RaidDifficulty}`, boolean>;
 export type Cycle = { id: string; name: string; archived: boolean; version: number; copied_from_id: string | null; has_constitution_sockets: boolean; socket_exempt_types: string };
-export type Source = { id: string; cycle_id: string; source_type: string; name: string; short_label: string; default_grade: number | null };
+export type Source = { id: string; cycle_id: string; source_type: string; name: string; short_label: string; actual_grade: number; active: boolean };
 export type Template = {
-  id: string; cycle_origin_id: string; source_id: string | null; source_type: string;
+  id: string; cycle_origin_id: string; source_id: string; source_type: string;
   source_name: string; short_label: string; equipment_type: string; actual_grade: number;
   has_constitution_socket: boolean; green_stats_ok: boolean;
   socket_applicable?: boolean;
@@ -13,7 +13,7 @@ export type Template = {
 };
 export type AttachmentChoice = { state: 'unknown' | 'none' | 'configured'; name: string; constitution: number | null };
 export type EquipmentChoices = { enchant: AttachmentChoice; rainbow: AttachmentChoice };
-export type EquipmentInput = Omit<Template, 'id' | 'actual_grade'> & { actual_grade: number | null };
+export type EquipmentInput = Pick<Template, 'source_id' | 'equipment_type' | 'has_constitution_socket' | 'green_stats_ok' | 'base_constitution_override' | 'name' | 'note'> & { expected_source_grade?: number };
 export type Cell = { equipment: Template | null; choices: EquipmentChoices | null; version: number; status: 'unset' | 'missing' | 'met' | 'gap' | 'grade_met'; reasons: string[]; label: string };
 export type Matrix = { account: Account; characters: Character[]; cells: Record<string, Record<string, Cell>>; growth: Record<string, GrowthSummary>; constitution: { status: string; message: string; total: null; stacks: null } };
 export type RaidCD = { enabled: boolean; version: number; timezone: string; next_10: string; next_25: string; period_10: string; period_25: string; clock_warning: boolean };

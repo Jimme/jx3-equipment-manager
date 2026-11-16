@@ -82,23 +82,15 @@ def test_no_constitution_required(client, setup):
     assert len(matrix['cells'][setup['character']['id']]) == 12
 
 
-def test_source_defaults_and_snapshot_do_not_retroactively_change(client, setup):
-    assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup, actual_grade=None)}).status_code == 200
+def test_referenced_source_locks_grade(client, setup):
+    equipment = equipment_payload(setup)
+    assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment}).status_code == 200
     source = setup['source']
-    assert client.put(f"/api/cycles/{setup['cycle']['id']}/sources/{source['id']}", json={
-        'source_type': '特殊', 'name': '新来源名', 'short_label': 'new', 'default_grade': 1200,
-    }).status_code == 200
-    template = client.get('/api/templates').json()[0]
-    assert (template['actual_grade'], template['source_name'], template['short_label']) == (1110, '测试来源', 't')
-    assert client.put(equipment_url(setup, 'chest'), json={'expected_version': 0, 'equipment': equipment_payload(setup, equipment_type='chest', actual_grade=None)}).status_code == 200
-    matrix = client.get(f"/api/accounts/{setup['account']['id']}/matrix").json()
-    assert matrix['cells'][setup['character']['id']]['chest']['equipment']['actual_grade'] == 1200
-
-
-def test_numeric_grade_overrides_source(client, setup):
-    assert client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': equipment_payload(setup, actual_grade=942)}).status_code == 200
-    template = client.get('/api/templates').json()[0]
-    assert template['actual_grade'] == 942
+    url = f"/api/cycles/{source['cycle_id']}/sources/{source['id']}"
+    body = {key: source[key] for key in ('name', 'short_label', 'source_type', 'active')}
+    assert client.put(url, json={**body, 'actual_grade': 1200}).status_code == 409
+    assert client.get('/api/templates').json()[0]['actual_grade'] == 1110
+    assert client.post('/api/templates', json={**equipment, 'actual_grade': 1200}).status_code == 422
 
 
 @pytest.mark.parametrize('field,value', [('actual_grade', 0), ('actual_grade', -1), ('actual_grade', 1.5), ('actual_grade', '1110'), ('actual_grade', True), ('base_constitution_override', -1), ('equipment_type', 'invalid')])
@@ -220,49 +212,22 @@ def test_api_route_missing_returns_json(client):
     assert response.headers['content-type'] == 'application/json'
 
 
-def test_migrate_legacy_database_preserves_references_and_constraints(tmp_path):
+def test_existing_populated_0011_cannot_be_silently_replaced(tmp_path):
     from alembic import command
     from alembic.config import Config
     from backend.database import ROOT
-    from backend.models import Account, Cycle, EquipmentConfig, Template, Workspace, WornEquipment
-    from sqlalchemy.exc import IntegrityError
 
     engine = make_engine(tmp_path)
     config = Config(str(ROOT / 'alembic.ini'))
     config.set_main_option('script_location', str(ROOT / 'backend' / 'migrations'))
     with engine.begin() as conn:
         config.attributes['connection'] = conn
-        command.upgrade(config, '0001')
-        conn.exec_driver_sql("INSERT INTO equipment_cycles (id,name,archived) VALUES ('cycle','旧周期',0)")
-        conn.exec_driver_sql("INSERT INTO workspace_settings (id,active_cycle_id) VALUES (1,'cycle')")
-        conn.exec_driver_sql("INSERT INTO game_accounts(id,name,sort_order,archived,target_grade,comparison_mode) VALUES ('account','已有账号',0,0,1110,'strict')")
-        conn.exec_driver_sql(
-            'INSERT INTO characters (id, account_id, name, sort_order, archived) VALUES (?, ?, ?, 0, 0)',
-            ('character', 'account', '已有角色'),
-        )
-        conn.execute(Template.__table__.insert().values(id='template', cycle_origin_id='cycle', source_type='测试', source_name='旧来源', short_label='旧', equipment_type='hat', actual_grade=1110, has_constitution_socket=False, green_stats_ok=True))
-        conn.exec_driver_sql("INSERT INTO equipment_configs (id,template_id,enchant_state,rainbow_state) VALUES ('config','template','unknown','not_applicable')")
-        conn.execute(WornEquipment.__table__.insert().values(character_id='character', slot='hat', config_id='config', version=3))
-        conn.execute(AuditEvent.__table__.insert().values(id='audit', created_at='2026-11-04', account_id='account', operation='test', entity_id='character', snapshots='{}'))
-    migrate(engine)
+        command.upgrade(config, '0011')
+        conn.exec_driver_sql("INSERT INTO equipment_cycles (id,name,archived,version) VALUES ('cycle','旧周期',0,0)")
+        conn.exec_driver_sql("INSERT INTO equipment_sources (id,cycle_id,source_type,name,short_label,default_grade) VALUES ('source','cycle','测试','旧来源','旧',1110)")
+    with pytest.raises(RuntimeError, match='独立空白数据目录'):
+        migrate(engine)
     with engine.connect() as conn:
-        assert conn.exec_driver_sql('PRAGMA foreign_keys').scalar() == 1
-        assert conn.exec_driver_sql('PRAGMA foreign_key_check').fetchall() == []
-        assert conn.exec_driver_sql('SELECT comparison_mode FROM game_accounts').scalar() == 'strict'
-        assert conn.exec_driver_sql('SELECT version FROM character_equipment').scalar() == 3
-        assert conn.exec_driver_sql('SELECT account_id FROM audit_events').scalar() == 'account'
         assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == '0011'
-    with engine.begin() as conn:
-        conn.exec_driver_sql("UPDATE game_accounts SET comparison_mode='combined'")
-    with pytest.raises(IntegrityError), engine.begin() as conn:
-        conn.exec_driver_sql('UPDATE game_accounts SET target_grade=-1')
-    backup = list((tmp_path / 'backups').glob('before-migration-*.sqlite3'))
-    assert len(backup) == 1
-    with sqlite3.connect(backup[0]) as conn:
-        assert conn.execute('SELECT version_num FROM alembic_version').fetchone()[0] == '0001'
-        assert conn.execute('SELECT actual_grade FROM equipment_templates').fetchone()[0] == 1110
+        assert conn.exec_driver_sql('SELECT default_grade FROM equipment_sources').scalar() == 1110
     engine.dispose()
-    with TestClient(create_app(tmp_path)) as client:
-        matrix = client.get('/api/accounts/account/matrix').json()
-        assert matrix['account']['comparison_mode'] == 'combined'
-        assert matrix['cells']['character']['hat']['status'] == 'grade_met'

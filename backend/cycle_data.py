@@ -149,7 +149,7 @@ def impact_for(session, cycle_id, kind, changes):
         after = change['after']['constitution'] if change['after'] else None
         if before != after:
             affected[(row['actual_grade'], row['equipment_type'])] = (before, after)
-    templates = {t.id: t for t in session.scalars(select(Template).where(Template.cycle_origin_id == cycle_id, Template.base_constitution_override.is_(None))) if (t.actual_grade, t.equipment_type) in affected}
+    templates = {t.id: t for t in session.scalars(select(Template).join(Source).where(Source.cycle_id == cycle_id, Template.base_constitution_override.is_(None))) if (t.actual_grade, t.equipment_type) in affected}
     worn, warehouse, drops = [], [], []
     if templates:
         records = session.execute(select(WornEquipment, Character, EquipmentConfig).join(Character, Character.id == WornEquipment.character_id).join(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id).where(EquipmentConfig.template_id.in_(templates))).all()
@@ -189,7 +189,8 @@ def make_cycle_data_router(engine, read_database):
             result[name] = session.scalar(select(aggregate).select_from(model)
                 .join(EquipmentConfig, model.config_id == EquipmentConfig.id)
                 .join(Template, EquipmentConfig.template_id == Template.id)
-                .where(Template.cycle_origin_id == cycle_id, Template.equipment_type != 'ring')) or 0
+                .join(Source, Source.id == Template.source_id)
+                .where(Source.cycle_id == cycle_id, Template.equipment_type != 'ring')) or 0
         return result
 
     def editable(session, cycle_id):
@@ -254,11 +255,13 @@ def make_cycle_data_router(engine, read_database):
         cycle = require(session, Cycle, cycle_id)
         check_version(cycle, payload.expected_version)
         counts = {kind: len(rows_for(session, cycle_id, kind)) for kind in SPECS}
-        sources = len(list(session.scalars(select(Source).where(Source.cycle_id == cycle_id))))
-        token = CycleChangePreview(id=new_id(), cycle_id=cycle_id, expected_version=cycle.version, kind='copy', rows_json=json.dumps({'name': payload.name}, ensure_ascii=False), created_at=datetime.now(timezone.utc).isoformat(), result_json=None)
+        allowed = set(session.scalars(select(Source.id).where(Source.cycle_id == cycle_id)))
+        if not payload.source_ids <= allowed:
+            raise HTTPException(422, '请选择该周期的来源')
+        token = CycleChangePreview(id=new_id(), cycle_id=cycle_id, expected_version=cycle.version, kind='copy', rows_json=json.dumps({'name': payload.name, 'source_ids': sorted(payload.source_ids)}, ensure_ascii=False), created_at=datetime.now(timezone.utc).isoformat(), result_json=None)
         session.add(token)
         session.commit()
-        return {'preview_id': token.id, 'kind': 'copy', 'name': payload.name, 'sources': sources, 'table_counts': counts, 'message': '复制来源默认值和全部数值配置，并切换到新周期。旧周期、旧装备和库存保持原样。'}
+        return {'preview_id': token.id, 'kind': 'copy', 'name': payload.name, 'sources': len(payload.source_ids), 'table_counts': counts, 'message': '复制所选来源和数值配置，并切换到新周期。仍启用的旧来源可继续选择。'}
 
     @router.post('/{cycle_id}/changes/{preview_id}/apply')
     def apply_preview(cycle_id: str, preview_id: str, session: Session = WRITE):
@@ -286,7 +289,7 @@ def make_cycle_data_router(engine, read_database):
             copied = Cycle(id=new_id(), name=rows['name'], archived=False, version=0, copied_from_id=cycle_id, has_constitution_sockets=cycle.has_constitution_sockets, socket_exempt_types=cycle.socket_exempt_types)
             session.add(copied)
             session.flush()
-            for source in session.scalars(select(Source).where(Source.cycle_id == cycle_id)):
+            for source in session.scalars(select(Source).where(Source.cycle_id == cycle_id, Source.id.in_(rows['source_ids']))):
                 values = dump(source)
                 values.update(id=new_id(), cycle_id=copied.id)
                 session.add(Source(**values))

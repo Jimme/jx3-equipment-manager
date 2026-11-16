@@ -1,12 +1,14 @@
+import { fixtureSource } from './sourceFixture';
 import { expect, test } from '@playwright/test';
 
 test('数量已保存但响应丢失：修改草稿先核对旧操作，显式采用最新版本后再保存', async ({ page, request }) => {
   const cycle = await (await request.post('/api/cycles', { data: { name: '响应丢失验收周期' } })).json();
+  const sourceId = await fixtureSource(request, cycle.id, 1110);
   const account = await (await request.post('/api/accounts', { data: { name: '响应丢失验收账号' } })).json();
   const prefix = `/api/accounts/${account.id}`;
   const stock = await (await request.post(prefix + '/warehouse', { data: {
     request_id: crypto.randomUUID(), quantity: 2,
-    equipment: { cycle_origin_id: cycle.id, equipment_type: 'hat', actual_grade: 1110, has_constitution_socket: true, green_stats_ok: true },
+    equipment: { source_id: sourceId, equipment_type: 'hat', has_constitution_socket: true, green_stats_ok: true },
   } })).json();
   await page.goto('/');
   await page.getByLabel('游戏账号', { exact: true }).selectOption(account.id);

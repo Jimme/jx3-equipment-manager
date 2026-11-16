@@ -4,9 +4,9 @@ from .conftest import equipment_payload, equipment_url
 from .test_inventory import add, daily, path, request_id
 
 
-def batch_row(item, payload, grade, quantity):
+def batch_row(setup, item, payload, grade, quantity):
     return {'item_id': item['id'], 'expected_version': item['version'], 'quantity': quantity,
-            'equipment': {**payload['equipment'], 'actual_grade': grade}, 'choices': item['choices']}
+            'equipment': {**payload['equipment'], 'source_id': equipment_payload(setup, actual_grade=grade)['source_id']}, 'choices': item['choices']}
 
 
 def preview(client, setup, rows, all_stock=None):
@@ -25,8 +25,8 @@ def test_chained_corrections_split_and_add_against_original_quantities(client, s
     first, a = add(client, setup, quantity=4, actual_grade=965)
     second, b = add(client, setup, quantity=2, actual_grade=1110)
     client.put(equipment_url(setup), json={'expected_version': 0, 'equipment': a['equipment']})
-    rows = [batch_row(first, a, 1110, 3), batch_row(second, b, 1200, 2),
-            {'equipment': {**a['equipment'], 'actual_grade': 1200}, 'quantity': 1}]
+    rows = [batch_row(setup, first, a, 1110, 3), batch_row(setup, second, b, 1200, 2),
+            {'equipment': {**a['equipment'], 'source_id': equipment_payload(setup, actual_grade=1200)['source_id']}, 'quantity': 1}]
     before = client.get('/api/data/export').json()['tables']
     worn = client.get(path(setup) + '/matrix').json()['cells']
     response = preview(client, setup, rows, {first['id']: first['version'], second['id']: second['version']})
@@ -46,7 +46,7 @@ def test_chained_corrections_split_and_add_against_original_quantities(client, s
 
 def test_new_stock_conflicts_with_whole_warehouse_preview(client, setup):
     first, a = add(client, setup, quantity=2, actual_grade=965)
-    row = batch_row(first, a, 1110, 2)
+    row = batch_row(setup, first, a, 1110, 2)
     draft = preview(client, setup, [row], {first['id']: first['version']}).json()
     add(client, setup, actual_grade=1300)
     assert apply(client, setup, draft['preview_id']).status_code == 409
@@ -56,7 +56,7 @@ def test_new_stock_conflicts_with_whole_warehouse_preview(client, setup):
 def test_target_update_and_cross_account_reject_without_writes(client, setup):
     first, a = add(client, setup, quantity=3, actual_grade=965)
     add(client, setup, quantity=2, actual_grade=1110)
-    row = batch_row(first, a, 1110, 1)
+    row = batch_row(setup, first, a, 1110, 1)
     draft = preview(client, setup, [row]).json()
     add(client, setup, actual_grade=1110)
     assert apply(client, setup, draft['preview_id']).status_code == 409

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .domain import socket_applicable, SLOTS
 from .models import (Account, Character, CharacterCalculation, Cycle, CycleBaseStat, CycleBuffThreshold,
                      CycleEnchantStat, CycleRainbowStat, CycleRefineStat, CycleStoneStat,
-                     EquipmentConfig, SlotSetting, Template, Workspace, WornEquipment)
+                     EquipmentConfig, SlotSetting, Template, Workspace, Source, WornEquipment)
 from .schemas import GrowthInput
 from .services import BASE_STAT_MATCH, audit, dump, require
 
@@ -69,25 +69,26 @@ def load_growth_slots(session, character_ids):
         .join(SlotSetting, and_(SlotSetting.character_id == WornEquipment.character_id, SlotSetting.slot == WornEquipment.slot))
         .outerjoin(EquipmentConfig, EquipmentConfig.id == WornEquipment.config_id)
         .outerjoin(Template, Template.id == EquipmentConfig.template_id)
-        .outerjoin(Cycle, Cycle.id == Template.cycle_origin_id)
+        .outerjoin(Source, Source.id == Template.source_id)
+        .outerjoin(Cycle, Cycle.id == Source.cycle_id)
         .outerjoin(CycleBaseStat, BASE_STAT_MATCH)
         .outerjoin(CycleRefineStat, and_(
-            CycleRefineStat.cycle_id == Template.cycle_origin_id,
-            CycleRefineStat.actual_grade == Template.actual_grade,
+            CycleRefineStat.cycle_id == Source.cycle_id,
+            CycleRefineStat.actual_grade == Source.actual_grade,
             CycleRefineStat.equipment_type == Template.equipment_type,
             CycleRefineStat.refine_level == SlotSetting.refine_level,
         ))
         .outerjoin(CycleStoneStat, and_(
-            CycleStoneStat.cycle_id == Template.cycle_origin_id,
+            CycleStoneStat.cycle_id == Source.cycle_id,
             CycleStoneStat.stone_level == SlotSetting.stone_level,
         ))
         .outerjoin(CycleEnchantStat, and_(
-            CycleEnchantStat.cycle_id == Template.cycle_origin_id,
+            CycleEnchantStat.cycle_id == Source.cycle_id,
             CycleEnchantStat.equipment_type == Template.equipment_type,
             CycleEnchantStat.name == EquipmentConfig.enchant_name,
         ))
         .outerjoin(CycleRainbowStat, and_(
-            CycleRainbowStat.cycle_id == Template.cycle_origin_id,
+            CycleRainbowStat.cycle_id == Source.cycle_id,
             CycleRainbowStat.name == EquipmentConfig.rainbow_name,
         ))
         .where(WornEquipment.character_id.in_(character_ids))
