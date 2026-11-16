@@ -22,7 +22,7 @@ test('按部位免孔比较，录入保留实际孔状态与戒指例外', async
   await expect(rule).toBeChecked();
   await saveRule.click();
   await expect(rule).toBeChecked();
-  await expect(dialog.getByRole('status')).toContainText('已更新周期体质孔规则');
+  await expect(dialog.getByRole('status').filter({ hasText: '已更新周期体质孔规则' })).toBeVisible();
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '体质孔规则角色 帽子', exact: true }).click();
   await dialog.getByRole('group', { name: '是否有体质孔' }).getByRole('radio', { name: '无', exact: true }).check();
