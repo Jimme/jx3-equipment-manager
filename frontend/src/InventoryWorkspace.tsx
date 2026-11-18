@@ -6,7 +6,7 @@ import { WarehouseEquip } from './WarehouseEquip';
 import { InventoryQuantity } from './InventoryQuantity';
 import { EquipmentForm } from './EquipmentForm';
 import { Modal } from './Modal';
-import type { Data, HistoryItem, InventoryItem, Run } from './types';
+import type { DailyData, Data, HistoryItem, InventoryItem, Run } from './types';
 
 export type StockTarget = 'warehouse' | 'drops';
 export type InventorySelection = { tab: StockTarget | 'gaps' | 'history'; equipmentType?: string };
@@ -40,9 +40,25 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [selectedDrops, setSelectedDrops] = useState<Record<string, number>>({});
+  const [gapResult, setGapResult] = useState<{ snapshot: DailyData; data?: DailyData; error?: string } | null>(null);
+  const [gapRetry, setGapRetry] = useState(0);
   useEffect(() => setSelectedDrops({}), [tab, equipmentType]);
   const daily = data.daily!;
   const path = `/accounts/${data.accountId}`;
+  const targetGrade = data.matrix!.account.target_grade;
+  useEffect(() => {
+    if (tab !== 'gaps' || targetGrade === null) {
+      setGapResult(null);
+      return;
+    }
+    let active = true;
+    api<DailyData>(`${path}/daily?skip_unconfigured_gaps=true`).then(result => {
+      if (active) setGapResult({ snapshot: daily, data: result });
+    }).catch(e => {
+      if (active) setGapResult({ snapshot: daily, error: e.message });
+    });
+    return () => { active = false; };
+  }, [tab, targetGrade, path, daily, gapRetry]);
   useEffect(() => {
     if (characterFilter && !data.matrix!.characters.some(c => c.id === characterFilter)) setCharacterFilter('');
   }, [data.matrix, characterFilter]);
@@ -72,11 +88,17 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
   const stockTab = tab === 'warehouse' || tab === 'drops' ? tab : null;
   const stock = stockTab ? daily[stockTab] : [];
   const items = equipmentType ? stock.filter(item => item.equipment.equipment_type === equipmentType) : stock;
+  const chosenDrops = tab === 'drops' ? items.filter(item => item.id in selectedDrops) : [];
+  const changedDrops = chosenDrops.filter(item => item.version !== selectedDrops[item.id]);
+  const missingDrops = Object.keys(selectedDrops).length - chosenDrops.length;
+  const dropsNeedReview = changedDrops.length > 0 || missingDrops > 0;
+  const describe = (item: InventoryItem) =>
+    `${item.equipment.source_name}${item.equipment.name ? ` · ${item.equipment.name}` : ''}。体质孔：${item.equipment.has_constitution_socket ? '有' : '无'}，绿字：${item.equipment.green_stats_ok ? '达标' : '未达标'}。${choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}${item.equipment.note ? `。备注：${item.equipment.note}` : ''}`;
   function deleteItem(item: InventoryItem, target: StockTarget) {
     const current = daily[target].find(row => row.id === item.id);
     if (!current) { void run(async () => { throw new Error('记录已移除，请核对最新列表'); }); return; }
     const label = target === 'warehouse' ? '库存' : '掉落';
-    if (!window.confirm(`删除${label}「${current.label} · ${current.equipment.actual_grade} 品」全部 ${current.quantity} 件？${choiceSummary(current.choices, current.equipment.equipment_type === 'weapon')}。角色穿戴不变。${dirty ? '本次未保存的更正草稿会放弃。' : ''}`)) return;
+    if (!window.confirm(`删除${label}「${current.label} · ${current.equipment.actual_grade} 品」全部 ${current.quantity} 件？\n${describe(current)}。角色穿戴不变。${dirty ? '本次未保存的更正草稿会放弃。' : ''}`)) return;
     void run(() => api(`${path}/${target}/${current.id}/quantity`, 'POST', {
       request_id: newRequestId(), expected_version: current.version, quantity: 0,
     }), `已删除${label}`, dialog ? dismiss : undefined);
@@ -92,10 +114,12 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
       request_id: newRequestId(), versions: Object.fromEntries(warehouse.map(item => [item.id, item.version])),
     }), '已备份并清空共享仓库');
   }
-  const warehouseById = useMemo(() => new Map(daily.warehouse.map(item => [item.id, item])), [daily.warehouse]);
-  const visibleGaps = useMemo(() => tab === 'gaps' ? daily.gaps.filter(gap =>
+  const currentGaps = gapResult?.snapshot === daily ? gapResult : null;
+  const gapData = currentGaps?.data;
+  const warehouseById = useMemo(() => new Map(gapData?.warehouse.map(item => [item.id, item])), [gapData]);
+  const visibleGaps = gapData?.gaps.filter(gap =>
     (!characterFilter || gap.character_id === characterFilter) && (!improvementsOnly || gap.candidate_ids.length > 0)
-  ) : [], [tab, daily.gaps, characterFilter, improvementsOnly]);
+  ) ?? [];
   const stockTitle = stockTab === 'warehouse' ? '共享仓库' : '团本掉落';
   const modalTitle = dialog?.kind === 'add' ? (dialog.target === 'warehouse' ? '添加共享库存' : '记录团本掉落') + (dialog.equipmentType ? ` · ${equipmentName(data, dialog.equipmentType)}` : '') : dialog?.kind === 'edit' ? `更正${dialog.target === 'warehouse' ? '库存' : '掉落'} · ${equipmentName(data, dialog.item.equipment.equipment_type)}` : dialog?.kind === 'equip' ? '从仓库给角色穿戴' : '确认获得并转入仓库';
 
@@ -112,20 +136,22 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
     </div>
     <div className="daily-content" id="daily-panel" role="region" aria-label="装备明细" hidden={!tab}>
       {(tab === 'warehouse' || tab === 'drops') && <>
-        {tab === 'drops' && items.length > 0 && <div className="batch-toolbar">
-          <button disabled={pending} onClick={() => setSelectedDrops(Object.fromEntries(items.map(item => [item.id, item.version])))}>选择当前筛选结果</button>
+        {tab === 'drops' && (items.length > 0 || missingDrops > 0) && <div className="batch-toolbar">
+          <button disabled={pending || !items.length} onClick={() => setSelectedDrops(Object.fromEntries(items.map(item => [item.id, item.version])))}>选择当前筛选结果</button>
           <button disabled={pending || !Object.keys(selectedDrops).length} onClick={() => setSelectedDrops({})}>取消选择</button>
-          <button className="primary" disabled={pending || !Object.keys(selectedDrops).length || Object.keys(selectedDrops).some(id => !items.some(item => item.id === id))} onClick={() => {
-            const chosen = items.filter(item => item.id in selectedDrops);
+          <button className="primary" disabled={pending || !chosenDrops.length || dropsNeedReview} onClick={() => {
+            const chosen = chosenDrops;
             const quantity = chosen.reduce((sum, item) => sum + item.quantity, 0);
             if (!window.confirm(`确认已获得并入库所选 ${chosen.length} 种配置，共 ${quantity} 件？\n${chosen.map(item => `${item.label} ${item.equipment.actual_grade} 品 ×${item.quantity}，${choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}`).join('\n')}\n其他及隐藏掉落不变；任一冲突整批不保存。`)) return;
             void run(() => api(`${path}/drops/batch-transfer`, 'POST', { request_id: newRequestId(), rows: Object.entries(selectedDrops).map(([id, version]) => ({ id, expected_version: version })) }), '所选掉落已整批入库', () => setSelectedDrops({}));
           }}>所选一键入库 · {Object.keys(selectedDrops).length} 项</button>
-          {Object.keys(selectedDrops).some(id => !items.some(item => item.id === id)) && <span className="error">选中项已移除，请重新核对选择。</span>}
+          {dropsNeedReview && <><span role="status" className="error">{changedDrops.length > 0 && `${changedDrops.length} 项已变化。 `}{missingDrops > 0 && `${missingDrops} 项已移除。 `}请核对当前件数。</span>
+            <button disabled={pending} onClick={() => setSelectedDrops(Object.fromEntries(chosenDrops.map(item => [item.id, item.version])))}>采用最新选择</button></>}
         </div>}
         {!data.cycleId && <p className="hint">请先在“周期与来源”中创建装备周期。</p>}
         {items.length === 0 ? <p className="small-empty">{tab === 'warehouse' ? '共享仓库还没有库存。' : '本次还没有记录掉落。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>装备</th><th>数量</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
           <td><strong>{!equipmentType && `${equipmentName(data, item.equipment.equipment_type)} · `}{item.label} · {item.equipment.actual_grade} 品</strong>
+            {tab === 'drops' && item.id in selectedDrops && item.version !== selectedDrops[item.id] && <span className="error"> · 已变化</span>}
             <details className="item-details"><summary>详情</summary><p>{item.equipment.source_name}{item.equipment.name && ` · ${item.equipment.name}`}</p><p>{choiceSummary(item.choices, item.equipment.equipment_type === 'weapon')}</p>{item.equipment.note && <p>{item.equipment.note}</p>}</details>
           </td>
           <td><InventoryQuantity accountId={data.accountId} target={tab} item={item} run={run} pending={pending}/></td>
@@ -136,20 +162,16 @@ export function InventoryWorkspace({ data, run, pending, error, selection, setSe
               <button disabled={pending} onClick={() => transferAll(item)}>一键入库 · {item.quantity} 件</button>
               <button disabled={pending} onClick={() => setDialog({ kind: 'transfer', item, requestId: newRequestId() })}>转入部分…</button>
             </>}
-            <button className="danger" disabled={pending} onClick={() => {
-              const label = tab === 'warehouse' ? '库存' : '掉落';
-              if (!window.confirm(`删除${label}「${item.label} · ${item.equipment.actual_grade} 品」的 ${item.quantity} 件记录？`)) return;
-              void run(() => api(`${path}/${tab}/${item.id}/quantity`, 'POST', {
-                request_id: newRequestId(), expected_version: item.version, quantity: 0,
-              }), `已删除${label}`);
-            }}>{tab === 'warehouse' ? '删除库存' : '删除掉落'}</button>
+            <button className="danger" disabled={pending} onClick={() => deleteItem(item, tab)}>{tab === 'warehouse' ? '删除库存' : '删除掉落'}</button>
           </div></td>
         </tr>)}</tbody></table></div>}
       </>}
       {tab === 'gaps' && <>
         {data.matrix!.account.target_grade === null ? <p className="small-empty">请先设置目标品级，再查看缺口明细。</p> : <>
           <div className="gap-filters">{data.matrix!.characters.length > 1 && <label>角色<select aria-label="缺口角色" value={characterFilter} onChange={e => setCharacterFilter(e.target.value)}><option value="">全部角色</option>{data.matrix!.characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}<label className="check"><input type="checkbox" checked={improvementsOnly} onChange={e => setImprovementsOnly(e.target.checked)}/>只看仓库可改善</label><span className="hint">确认穿戴后才扣库存</span></div>
-          {visibleGaps.length === 0 ? <p className="small-empty">{improvementsOnly ? '当前没有可改善项，可取消筛选查看全部缺口。' : '当前筛选下没有缺口记录。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>角色 / 部位</th><th>当前装备</th><th>未达标原因</th><th>可改善的共享库存</th></tr></thead><tbody>{visibleGaps.map(gap => <tr key={`${gap.character_id}:${gap.slot}`}>
+          {currentGaps?.error ? <p role="alert" className="error">{currentGaps.error} <button onClick={() => { setGapResult(null); setGapRetry(value => value + 1); }}>重试</button></p> :
+            !gapData ? <p className="small-empty" role="status">正在读取缺口…</p> :
+            visibleGaps.length === 0 ? <p className="small-empty">{improvementsOnly ? '当前没有可改善项，可取消筛选查看全部缺口。' : '当前筛选下没有缺口记录。'}</p> : <div className="daily-table-scroll"><table className="daily-table"><thead><tr><th>角色 / 部位</th><th>当前装备</th><th>未达标原因</th><th>可改善的共享库存</th></tr></thead><tbody>{visibleGaps.map(gap => <tr key={`${gap.character_id}:${gap.slot}`}>
             <td>{gap.character_name} · {gap.slot_name}</td><td>{gap.current_label}{gap.actual_grade !== null && ` · ${gap.actual_grade} 品`}</td>
             <td>{gap.reasons.join('；')}</td><td>{gap.candidate_ids.length === 0 ? <span className="hint">暂无匹配库存</span> : <div className="candidate-list">{gap.candidate_ids.map(id => {
               const item = warehouseById.get(id);
@@ -201,7 +223,7 @@ function EditInventory({ data, target, item, requestId, run, pending, close, sav
     extraDirty={quantity !== String(item.quantity)} submitLabel="保存更正" success="装备配置已更正"
     leadingFields={<>
       <div className="equipment-copy"><span>此配置共 {baseline.quantity} 件</span><button type="button" disabled={pending} onClick={() => void run(async () => {
-        const fresh = await api<{ warehouse: InventoryItem[]; drops: InventoryItem[] }>(`/accounts/${data.accountId}/daily?skip_unconfigured_gaps=true`);
+        const fresh = await api<{ warehouse: InventoryItem[]; drops: InventoryItem[] }>(`/accounts/${data.accountId}/daily?include_gaps=false`);
         const found = fresh[target].find(row => row.id === baseline.id);
         if (!found || !found.quantity) throw new Error('此记录已移除，请保留输入并返回核对最新列表');
         setLatest(found);
@@ -225,7 +247,7 @@ function DropTransfer({ data, item, requestId, run, pending, close, savedClose, 
   useEffect(() => { onDirty(quantity !== '1'); return () => onDirty(false); }, [quantity, onDirty]);
   return <form onSubmit={e => { e.preventDefault(); void run(() => api(`/accounts/${item.account_id}/drops/${item.id}/transfer`, 'POST', { request_id: requestId, expected_version: baseline.version, quantity: optionalInteger(quantity) }), '已转入共享仓库，并扣减对应掉落数量', savedClose); }}><fieldset disabled={pending}>
     <button type="button" onClick={() => void run(async () => {
-      const daily = await api<{drops: InventoryItem[]}>(`/accounts/${item.account_id}/daily?skip_unconfigured_gaps=true`);
+      const daily = await api<{drops: InventoryItem[]}>(`/accounts/${item.account_id}/daily?include_gaps=false`);
       const current = daily.drops.find(row => row.id === item.id);
       if (!current) throw new Error('这条掉落已移除，输入保留，请核对后退出');
       setLatest(current);

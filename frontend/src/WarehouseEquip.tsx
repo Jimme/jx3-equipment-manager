@@ -24,7 +24,7 @@ export function WarehouseEquip({ data, item, requestId, initialCharacter, initia
     request_id: requestId, expected_version: baseline.item.version, expected_equipment_version: cell.version, character_id: characterId, slot, choices: serializeChoices(choices),
   }), '已穿戴', savedClose ?? close); }}><fieldset disabled={pending}>
     <button type="button" onClick={() => void run(async () => {
-      const [matrix, daily] = await Promise.all([api<Matrix>(`/accounts/${item.account_id}/matrix`), api<DailyData>(`/accounts/${item.account_id}/daily?skip_unconfigured_gaps=true`)]);
+      const [matrix, daily] = await Promise.all([api<Matrix>(`/accounts/${item.account_id}/matrix`), api<DailyData>(`/accounts/${item.account_id}/daily?include_gaps=false`)]);
       const stock = daily.warehouse.find(row => row.id === item.id);
       if (!stock || !matrix.cells[characterId]?.[slot]) throw new Error('库存耗尽或角色已移除，输入保留，请核对后退出');
       setLatest({ item: stock, matrix });

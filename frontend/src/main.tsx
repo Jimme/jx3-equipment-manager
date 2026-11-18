@@ -2,7 +2,7 @@ import { requestId as newRequestId } from './requestId';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, ApiError, optionalInteger } from './api';
-import type { Cell, Character, DailyData, Data, InventoryItem, Matrix, RaidDifficulty, Run, Source, Template, Workspace } from './types';
+import type { Cell, Character, DailyData, Data, InventoryItem, Matrix, RaidCD, RaidDifficulty, Run, Source, Template, Workspace } from './types';
 import { Modal } from './Modal';
 import { EquipmentForm } from './EquipmentForm';
 import { LatestEquipment } from './LatestEquipment';
@@ -86,6 +86,7 @@ function App() {
     ...Object.values(data?.matrix?.cells ?? {}).flatMap(cells => Object.values(cells).flatMap(cell => cell.equipment ? [cell.equipment.actual_grade] : [])),
   ].filter((v): v is number => v !== null))].sort((a, b) => a - b), [data?.sources, data?.templates, data?.daily, data?.matrix]);
   const loadVersion = useRef(0);
+  const mutationVersion = useRef(0);
   const pendingRef = useRef(false);
   const selectedAccount = useRef('');
 
@@ -98,7 +99,7 @@ function App() {
     const [matrix, sources, daily] = await Promise.all([
       activeAccount ? api<Matrix & { all_characters: Character[] }>(`/accounts/${activeAccount.id}/matrix?include_archived=true`) : Promise.resolve(null),
       api<Source[]>('/sources'),
-      activeAccount ? api<DailyData>(`/accounts/${activeAccount.id}/daily?skip_unconfigured_gaps=true`) : Promise.resolve(null),
+      activeAccount ? api<DailyData>(`/accounts/${activeAccount.id}/daily?include_gaps=false`) : Promise.resolve(null),
     ]);
     if (version !== loadVersion.current) return;
     const nextAccount = activeAccount?.id ?? '';
@@ -114,12 +115,43 @@ function App() {
 
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
   useEffect(() => {
-    if (!data?.workspace.raid_cd.enabled) return;
-    const timer = window.setInterval(() => {
-      if (!pendingRef.current) void load(selectedAccount.current).catch(e => setError(e.message));
-    }, 15000);
-    return () => window.clearInterval(timer);
-  }, [data?.workspace.raid_cd.enabled]);
+    const accountId = data?.accountId;
+    if (!data?.workspace.raid_cd.enabled || !accountId) return;
+    let active = true;
+    let reading = false;
+    async function readProgress() {
+      if (document.hidden || pendingRef.current || reading) return;
+      reading = true;
+      const version = loadVersion.current;
+      const mutation = mutationVersion.current;
+      const isCurrent = () => active && !pendingRef.current && selectedAccount.current === accountId &&
+        version === loadVersion.current && mutation === mutationVersion.current;
+      try {
+        type Progress = Pick<Character, 'id' | 'raid_version' | `raid_${RaidDifficulty}`>;
+        const result = await api<{ raid_cd: RaidCD; characters: Progress[] }>(`/accounts/${accountId}/raid-progress`);
+        if (!isCurrent()) return;
+        const progress = new Map(result.characters.map(character => [character.id, character]));
+        const update = (character: Character) => ({ ...character, ...progress.get(character.id) });
+        setData(previous => {
+          if (!previous?.matrix || !isCurrent() || previous.accountId !== accountId) return previous;
+          return { ...previous, workspace: { ...previous.workspace, raid_cd: result.raid_cd },
+            characters: previous.characters.map(update),
+            matrix: { ...previous.matrix, characters: previous.matrix.characters.map(update) } };
+        });
+      } catch (e) {
+        if (isCurrent()) setError(e instanceof Error ? e.message : '读取副本进度失败');
+      } finally {
+        reading = false;
+      }
+    }
+    const timer = window.setInterval(readProgress, 15000);
+    document.addEventListener('visibilitychange', readProgress);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', readProgress);
+    };
+  }, [data?.workspace.raid_cd.enabled, data?.accountId]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(''), 4000);
@@ -135,6 +167,7 @@ function App() {
 
   const run: Run = async (action, success = '已保存', close, reload = true) => {
     if (pendingRef.current) return false;
+    mutationVersion.current++;
     pendingRef.current = true;
     setPending(true); setError(''); setNotice('');
     let completed = false;
@@ -295,7 +328,7 @@ function App() {
       </table></div>
     </section>}
     {account && <InventoryWorkspace key={accountId} data={data} run={run} pending={pending} error={error} selection={inventorySelection} setSelection={setInventorySelection} dialog={inventoryDialog} setDialog={setInventoryDialog}/> }
-    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.15</span></footer>
+    <footer>数据保存在应用的 data 目录 · 无需游戏连接<span>v0.1.16</span></footer>
     {panel && <Modal title={peoplePanel ? '账号与角色' : panel === 'data' ? '数据与备份' : '周期与来源'} close={closePanel} wide={panel === 'sources'} busy={pending}>
       {error && <p role="alert" className="message error">{error}</p>}
       <fieldset disabled={pending}>{peoplePanel ? <People data={data} run={run} selectAccount={load} onDirty={setPeopleDirty} addCharacter={panel === 'add-character'}/> : panel === 'data' ? <DataManager run={run} pending={pending} close={closePanel} replaced={()=>setLastEquipment(null)}/> : <CycleSettings data={data} run={run} pending={pending} onDirty={setCycleDirty}/>}</fieldset>

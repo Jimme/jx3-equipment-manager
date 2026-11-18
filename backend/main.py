@@ -54,7 +54,7 @@ def create_app(data_dir: Path | None = None):
                 await task
             engine.dispose()
 
-    app = FastAPI(title="剑网三坦克装备管理", version="0.1.15", lifespan=lifespan)
+    app = FastAPI(title="剑网三坦克装备管理", version="0.1.16", lifespan=lifespan)
     app.state.engine = engine
 
     def database():
@@ -210,6 +210,18 @@ def create_app(data_dir: Path | None = None):
         if payload.expected_version is None:
             raise HTTPException(409, '旧版管理表单缺少版本，请刷新页面后核对再保存')
         return edit_entity(session, character, ManagementPatch.model_validate(payload.model_dump(exclude={'request_id'})), account_id)
+
+    @app.get("/api/accounts/{account_id}/raid-progress")
+    def get_raid_progress(account_id: str, session: Session = WRITE):
+        require(session, Account, account_id)
+        setting = reconcile(session)
+        rows = session.execute(
+            select(Character.id, Character.raid_version, Character.raid_10, Character.raid_25pt, Character.raid_25yx)
+            .where(Character.account_id == account_id)
+        ).mappings()
+        result = {'raid_cd': raid_state(session, setting), 'characters': [dict(row) for row in rows]}
+        session.commit()
+        return result
 
     @app.put("/api/accounts/{account_id}/characters/{character_id}/raid-checks/{difficulty}")
     def set_raid_check(account_id: str, character_id: str, difficulty: Literal['10', '25pt', '25yx'],

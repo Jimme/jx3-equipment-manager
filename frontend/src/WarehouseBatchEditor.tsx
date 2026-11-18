@@ -75,7 +75,7 @@ export function WarehouseBatchEditor({ data, run, pending, close, savedClose, on
     }, commonSource))]);
   }
   async function reread() {
-    const [daily, workspace, sources] = await Promise.all([api<DailyData>(`/accounts/${data.accountId}/daily?skip_unconfigured_gaps=true`), api<Workspace>('/workspace'), api<Source[]>('/sources')]);
+    const [daily, workspace, sources] = await Promise.all([api<DailyData>(`/accounts/${data.accountId}/daily?include_gaps=false`), api<Workspace>('/workspace'), api<Source[]>('/sources')]);
     if (!workspace.accounts.some(account => account.id === data.accountId && !account.archived)) throw new Error('账号已移除或归档，请保留草稿并返回核对');
     setWorking(old => ({ ...old, daily, workspace, sources }));
     const current = new Map(daily.warehouse.map(item => [item.id, item]));

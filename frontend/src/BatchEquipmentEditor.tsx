@@ -32,6 +32,10 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
   const warehouse = useMemo(() => new Map(working.daily!.warehouse.map(item => [item.id, item])), [working.daily]);
   const chosen = rows.filter(row => row.selected);
+  const hasEquipment = rows.some(row => !!currentCell(row.slot).equipment);
+  const uniformScope = chosen.length
+    ? `套用 ${chosen.filter(row => !row.sourceOverride && row.action !== 'warehouse' && row.action !== 'clear').length} 个勾选部位`
+    : dirty ? '先勾选要套用的部位' : hasEquipment ? '套用已穿戴部位' : '套用全部 12 个部位';
   const typeFor = (slot: string) => slot.startsWith('ring') ? 'ring' : slot;
   const hasSocket = (row: Row) => socketApplicable(typeFor(row.slot));
   function update(slot: string, values: Partial<Row>) {
@@ -73,7 +77,6 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
     setUniform(old => ({ ...old, source: id }));
     if (!id) return;
     const autoSelect = !chosen.length && !dirty;
-    const hasEquipment = rows.some(row => !!currentCell(row.slot).equipment);
     setRows(old => old.map(row => {
       const selected = row.selected || (autoSelect && (!hasEquipment || !!currentCell(row.slot).equipment));
       return selected ? { ...adoptSource(row, id), selected } : row;
@@ -104,7 +107,7 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
   async function reread() {
     const base = `/accounts/${working.accountId}`;
     const [matrix, daily, workspace, sources] = await Promise.all([
-      api<Matrix>(base + '/matrix'), api<DailyData>(base + '/daily?skip_unconfigured_gaps=true'), api<Workspace>('/workspace'), api<Source[]>('/sources'),
+      api<Matrix>(base + '/matrix'), api<DailyData>(base + '/daily?include_gaps=false'), api<Workspace>('/workspace'), api<Source[]>('/sources'),
     ]);
     if (!matrix.characters.some(item => item.id === character.id)) throw new Error('角色已移除，请保留草稿并返回核对');
     setWorking(old => ({ ...old, matrix, daily, workspace, sources }));
@@ -148,7 +151,8 @@ export function BatchEquipmentEditor({ data, character, run, pending, close, sav
     }, '', undefined, false);
   }}>
     <div className="batch-toolbar">
-      <label className="batch-common-source">统一来源<select aria-label="批量统一来源" disabled={pending} value={uniform.source} onChange={e => setUniformSource(e.target.value)}><option value="">请选择来源</option>{activeSources.map(source => <option key={source.id} value={source.id}>{sourceLabel(working, source)}</option>)}</select></label>
+      <label className="batch-common-source">统一来源<select aria-label="批量统一来源" aria-describedby="batch-source-scope" disabled={pending} value={uniform.source} onChange={e => setUniformSource(e.target.value)}><option value="">请选择来源</option>{activeSources.map(source => <option key={source.id} value={source.id}>{sourceLabel(working, source)}</option>)}</select></label>
+      <span id="batch-source-scope" className="hint">{uniformScope}</span>
       <button type="button" disabled={pending} onClick={() => chooseScope('new')}>整套换装</button>
       <button type="button" disabled={pending} onClick={() => chooseScope('edit')}>选已穿戴</button>
       <button type="button" disabled={pending} onClick={() => chooseScope('empty')}>选空部位</button>

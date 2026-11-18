@@ -15,6 +15,7 @@ test('换周期后批量可继续用旧声望来源，单行换源时品级随�
   await page.getByRole('button', { name: '换版验收角色 批量录入装备' }).click();
   const form = page.getByRole('dialog');
   await expect(form.getByLabel('批量统一品级')).toHaveCount(0);
+  await expect(form.getByText('套用全部 12 个部位')).toBeVisible();
   const rows = form.locator('.batch-table tbody tr');
   await expect(rows).toHaveCount(12);
   const scroll = form.locator('.batch-scroll');

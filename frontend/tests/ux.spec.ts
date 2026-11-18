@@ -101,7 +101,7 @@ test('精简流程：格子选库存、纠错保留附魔、显式换装、单�
   expect((await (await request.get(`${prefix}/history`)).json()).length).toBe(historyCount);
   await page.getByRole('button', { name: '修改U-数量', exact: true }).click();
   await page.getByLabel('实际数量').fill('3');
-  await page.route(`**/api/accounts/${account.id}/daily?skip_unconfigured_gaps=true`, route => route.fulfill({ status: 503, json: { detail: '测试刷新中断' } }), { times: 1 });
+  await page.route(`**/api/accounts/${account.id}/daily?include_gaps=false`, route => route.fulfill({ status: 503, json: { detail: '测试刷新中断' } }), { times: 1 });
   await page.getByRole('button', { name: '保存数量', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('操作已提交，但页面刷新失败');
   expect((await state()).warehouse[0].quantity).toBe(3);

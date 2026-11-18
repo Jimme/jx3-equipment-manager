@@ -125,7 +125,7 @@ def make_inventory_router(engine, read_database):
     WRITE = Depends(write_database)
 
     @router.get('/daily')
-    def daily(account_id: str, skip_unconfigured_gaps: bool = False, session: Session = DB):
+    def daily(account_id: str, skip_unconfigured_gaps: bool = False, include_gaps: bool = True, session: Session = DB):
         account = active_account(session, account_id)
         warehouse = [item_view(row, config, template_snapshot(template, base, available)) for row, config, template, base, available in session.execute(
             inventory_rows(WarehouseStack).where(WarehouseStack.account_id == account_id, WarehouseStack.quantity > 0).order_by(WarehouseStack.id))]
@@ -134,7 +134,7 @@ def make_inventory_router(engine, read_database):
         state = session.get(RaidMemoState, account_id)
         gaps = []
         result = {'warehouse': warehouse, 'drops': drops, 'drop_version': state.version if state else 0, 'gaps': gaps}
-        if skip_unconfigured_gaps and account.target_grade is None:
+        if not include_gaps or (skip_unconfigured_gaps and account.target_grade is None):
             return result
         characters = list(session.scalars(select(Character).where(Character.account_id == account_id, Character.archived.is_(False)).order_by(Character.sort_order, Character.name, Character.id)))
         worn = {(row.character_id, row.slot): (row, template, available) for row, template, available in session.execute(
